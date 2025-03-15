@@ -197,6 +197,19 @@ def search_books():
     logger.info(f"Returning {len(books)} filtered results")
     return jsonify(response_data), 200
 
+@app.route('/list_results', methods=['GET'])
+def list_results():
+    """List all saved CSV results files"""
+    try:
+        files = os.listdir(RESULTS_DIR)
+        csv_files = [f for f in files if f.endswith('.csv')]
+        return jsonify({
+            "files": csv_files,
+            "count": len(csv_files),
+            "directory": RESULTS_DIR
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
     port_env = os.environ.get("PORT", "5000")
