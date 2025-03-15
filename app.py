@@ -15,20 +15,9 @@ app = Flask(__name__)
 GOOGLE_BOOKS_API_KEY = os.getenv("GOOGLE_BOOKS_API_KEY")
 if not GOOGLE_BOOKS_API_KEY:
     logger.error("GOOGLE_BOOKS_API_KEY is not set. Please configure the environment variable.")
-
-RESULTS_DIR = os.path.join(
-    '/app' if os.getenv('HEROKU') else os.path.dirname(__file__),
-    'learning',
-    'Results'
-)
-os.makedirs(RESULTS_DIR, exist_ok=True)
-
-for path in [
-    os.path.join(os.path.dirname(__file__), 'learning', 'Results'),
-    os.path.join('/app', 'learning', 'Results') if os.getenv('HEROKU') else None
-]:
-    if path:
-        os.makedirs(path, exist_ok=True)
+    raise RuntimeError("GOOGLE_BOOKS_API_KEY is not set. Application cannot start without it.")
+RESULTS_DIR = os.path.join(os.getcwd(), "learning", "Results")
+os.makedirs(RESULTS_DIR, exist_ok=True)  # Ensure directory exists
 
 logger.info(f"Results directory: {RESULTS_DIR}")
 logger.info(f"Application root: {os.path.dirname(__file__)}")
@@ -41,6 +30,7 @@ def index():
             "status": "configuration_error",
             "message": "API key not configured. Please set GOOGLE_BOOKS_API_KEY environment variable."
         }), 503
+    return jsonify({"status": "running", "message": "Welcome to the Ill-Co-P Learns API!"}), 200
 
 def filter_book_data(volume_info):
     """Helper function to filter and validate book data with enhanced criteria"""
@@ -69,9 +59,12 @@ def filter_book_data(volume_info):
     # Category and keyword validation
     design_keywords = {
         'design', 'art', 'graphic', 'typography', 'layout',
-        'illustration', 'creative', 'visual', 'adobe',
-        'web design', 'user interface', 'ux', 'ui'
-    }
+    # Enhanced description validation
+    # Minimum description length is set to ensure substantive content.
+    # This value can be adjusted as needed.
+    MIN_DESCRIPTION_LENGTH = 100
+    if len(description) < MIN_DESCRIPTION_LENGTH:
+        return None
     
     # Check if any design-related keywords appear in title or categories
     title_lower = title.lower()
@@ -89,12 +82,14 @@ def filter_book_data(volume_info):
     # Minimum page count for substantive content
     if page_count and page_count < 50:
         return None
-    
-    # Clean and format the data
-    formatted_description = description[:500]
     if len(description) > 500:
         # Find the last complete sentence within the limit
         last_period = formatted_description.rfind('.')
+        if last_period > 400:  # Only trim at sentence if it's not too short
+            formatted_description = formatted_description[:last_period + 1]
+        formatted_description += "..."
+    else:
+        formatted_description = description
         if last_period > 400:  # Only trim at sentence if it's not too short
             formatted_description = formatted_description[:last_period + 1]
         formatted_description += "..."
@@ -119,9 +114,6 @@ def save_results_to_csv(books, query):
         
         logger.info(f"Attempting to save results to: {filepath}")
         logger.info(f"Number of books to save: {len(books)}")
-        
-        # Ensure directory exists
-        os.makedirs(RESULTS_DIR, exist_ok=True)
         
         fieldnames = ['title', 'author', 'published_date', 'description', 
                      'info_link', 'categories', 'page_count']
