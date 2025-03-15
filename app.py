@@ -95,26 +95,40 @@ def filter_book_data(volume_info):
     }
 
 def save_results_to_csv(books, query):
-    """Save search results to a CSV file"""
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    filename = f'search_results_{timestamp}.csv'
-    filepath = os.path.join(RESULTS_DIR, filename)
-    
-    fieldnames = ['title', 'author', 'published_date', 'description', 
-                 'info_link', 'categories', 'page_count']
-    
+    """Save search results to a CSV file with enhanced error handling"""
     try:
+        # Create timestamp and filename
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        filename = f'search_results_{query.replace(" ", "_")}_{timestamp}.csv'
+        filepath = os.path.join(RESULTS_DIR, filename)
+        
+        logger.info(f"Attempting to save results to: {filepath}")
+        logger.info(f"Number of books to save: {len(books)}")
+        
+        # Ensure directory exists
+        os.makedirs(RESULTS_DIR, exist_ok=True)
+        
+        fieldnames = ['title', 'author', 'published_date', 'description', 
+                     'info_link', 'categories', 'page_count']
+        
+        # Create a deep copy of books to avoid modifying the original data
+        books_to_save = []
+        for book in books:
+            book_copy = book.copy()
+            if isinstance(book_copy.get('categories'), list):
+                book_copy['categories'] = ', '.join(book_copy['categories'])
+            books_to_save.append(book_copy)
+        
         with open(filepath, 'w', newline='', encoding='utf-8') as csvfile:
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
             writer.writeheader()
-            for book in books:
-                # Convert categories list to string for CSV
-                book['categories'] = ', '.join(book['categories'])
-                writer.writerow(book)
-        logger.info(f"Search results saved to {filepath}")
+            writer.writerows(books_to_save)
+            
+        logger.info(f"Successfully saved {len(books)} results to {filepath}")
         return filename
+        
     except Exception as e:
-        logger.error(f"Error saving results to CSV: {e}")
+        logger.error(f"Error saving results to CSV: {str(e)}", exc_info=True)
         return None
 
 @app.route('/search_books', methods=['GET'])
@@ -159,19 +173,29 @@ def search_books():
         if book_data:
             books.append(book_data)
             
-        # Limit results to prevent overwhelming responses
         if len(books) >= 10:
             break
 
-    # Save results to CSV
-    csv_filename = save_results_to_csv(books, query)
-    
-    logger.info(f"Filtered {len(data['items'])} books to {len(books)} quality results")
-    return jsonify({
+    # Save results to CSV and handle the response
+    csv_filename = None
+    if books:  # Only try to save if we have results
+        csv_filename = save_results_to_csv(books, query)
+        if csv_filename:
+            logger.info(f"CSV file created: {csv_filename}")
+        else:
+            logger.warning("Failed to create CSV file")
+
+    response_data = {
         "books": books,
-        "csv_file": csv_filename,
-        "total_results": len(books)
-    }), 200
+        "total_results": len(books),
+    }
+    
+    if csv_filename:
+        response_data["csv_file"] = csv_filename
+        response_data["csv_path"] = os.path.join(RESULTS_DIR, csv_filename)
+
+    logger.info(f"Returning {len(books)} filtered results")
+    return jsonify(response_data), 200
 
 
 if __name__ == "__main__":
