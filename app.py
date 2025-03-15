@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 import requests
 import os
 import logging
@@ -16,8 +16,23 @@ GOOGLE_BOOKS_API_KEY = os.getenv("GOOGLE_BOOKS_API_KEY")
 if not GOOGLE_BOOKS_API_KEY:
     logger.error("GOOGLE_BOOKS_API_KEY is not set. Please configure the environment variable.")
 
-RESULTS_DIR = os.path.join(os.path.dirname(__file__), 'learning', 'Results')
+RESULTS_DIR = os.path.join(
+    '/app' if os.getenv('HEROKU') else os.path.dirname(__file__),
+    'learning',
+    'Results'
+)
 os.makedirs(RESULTS_DIR, exist_ok=True)
+
+for path in [
+    os.path.join(os.path.dirname(__file__), 'learning', 'Results'),
+    os.path.join('/app', 'learning', 'Results') if os.getenv('HEROKU') else None
+]:
+    if path:
+        os.makedirs(path, exist_ok=True)
+
+logger.info(f"Results directory: {RESULTS_DIR}")
+logger.info(f"Application root: {os.path.dirname(__file__)}")
+logger.info(f"Running on Heroku: {bool(os.getenv('HEROKU'))}")
 
 @app.route('/')
 def index():
@@ -210,6 +225,19 @@ def list_results():
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+@app.route('/download_results/<filename>', methods=['GET'])
+def download_results(filename):
+    """Download a specific CSV file"""
+    try:
+        return send_from_directory(
+            RESULTS_DIR,
+            filename,
+            as_attachment=True,
+            mimetype='text/csv'
+        )
+    except Exception as e:
+        return jsonify({"error": f"File not found: {str(e)}"}), 404
 
 if __name__ == "__main__":
     port_env = os.environ.get("PORT", "5000")
