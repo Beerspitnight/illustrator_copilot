@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify
 import requests
 import os
 import logging
@@ -11,11 +11,12 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-# Google Books API Key with graceful fallback
+# Google Books API Key with graceful fallback - MOVED BEFORE ANY ROUTES
 GOOGLE_BOOKS_API_KEY = os.getenv("GOOGLE_BOOKS_API_KEY")
 if not GOOGLE_BOOKS_API_KEY:
     logger.error("GOOGLE_BOOKS_API_KEY is not set. Please configure the environment variable.")
     raise RuntimeError("GOOGLE_BOOKS_API_KEY is not set. Application cannot start without it.")
+
 RESULTS_DIR = os.path.join(os.getcwd(), "learning", "Results")
 os.makedirs(RESULTS_DIR, exist_ok=True)  # Ensure directory exists
 
@@ -25,12 +26,42 @@ logger.info(f"Running on Heroku: {bool(os.getenv('HEROKU'))}")
 
 @app.route('/')
 def index():
+    """Single index route that returns HTML for better browser display"""
+    logger.info("Index route accessed!")
     if not GOOGLE_BOOKS_API_KEY:
+        logger.error("API key not configured")
         return jsonify({
             "status": "configuration_error",
             "message": "API key not configured. Please set GOOGLE_BOOKS_API_KEY environment variable."
         }), 503
-    return jsonify({"status": "running", "message": "Welcome to the Ill-Co-P Learns API!"}), 200
+    
+    # Return HTML instead of JSON for better browser experience
+    return """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>LibraryCloud API</title>
+        <style>
+            body { font-family: Arial, sans-serif; margin: 40px; line-height: 1.6; }
+            h1 { color: #333; }
+            .endpoint { background: #f4f4f4; padding: 10px; border-radius: 5px; margin-bottom: 10px; }
+        </style>
+    </head>
+    <body>
+        <h1>Welcome to the Ill-Co-P Learns API!</h1>
+        <p>The API is running successfully.</p>
+        <h2>Available Endpoints:</h2>
+        <div class="endpoint">
+            <p><strong>Search Books:</strong> /search_books?query=your_search_term</p>
+            <p>Example: <a href="/search_books?query=design">/search_books?query=design</a></p>
+        </div>
+        <div class="endpoint">
+            <p><strong>List Results:</strong> /list_results</p>
+            <p>Example: <a href="/list_results">/list_results</a></p>
+        </div>
+    </body>
+    </html>
+    """
 
 def filter_book_data(volume_info):
     """Extract relevant book information and format description."""
@@ -65,8 +96,8 @@ def save_results_to_csv(books, query):
         logger.info(f"Attempting to save results to: {filepath}")
         logger.info(f"Number of books to save: {len(books)}")
         
-        fieldnames = ['title', 'author', 'published_date', 'description', 
-                     'info_link', 'categories', 'page_count']
+        # Define fields once and consistently - Fixed
+        fieldnames = ['title', 'authors', 'description']
         
         # Create a deep copy of books to avoid modifying the original data
         books_to_save = []
@@ -80,7 +111,7 @@ def save_results_to_csv(books, query):
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
             writer.writeheader()
             writer.writerows(books_to_save)
-            
+        
         logger.info(f"Successfully saved {len(books)} results to {filepath}")
         return filename
         
@@ -160,7 +191,7 @@ def list_results():
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-   # --- Debugging Route
+
 if __name__ == "__main__":
     port_env = os.environ.get("PORT", "5000")
     try:
