@@ -80,16 +80,18 @@ def filter_book_data(volume_info):
     # Minimum page count for substantive content
     if page_count and page_count < 50:
         return None
+    
+    # Format description with proper sentence trimming
+    formatted_description = description
+    last_period = formatted_description.rfind('.')
+    
     if len(description) > 500:
-        # Find the last complete sentence within the limit
-        last_period = formatted_description.rfind('.')
-        if last_period > 400:  # Only trim at sentence if it's not too short
+        if last_period > 0 and last_period <= 500:
+            # Trim at the last complete sentence within 500 chars
             formatted_description = formatted_description[:last_period + 1]
-        formatted_description += "..."
-    else:
-        formatted_description = description
-        if last_period > 400:  # Only trim at sentence if it's not too short
-            formatted_description = formatted_description[:last_period + 1]
+        else:
+            # If no suitable sentence break, just trim at 500
+            formatted_description = formatted_description[:500]
         formatted_description += "..."
     
     return {
