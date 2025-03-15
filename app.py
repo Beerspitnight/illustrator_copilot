@@ -52,10 +52,6 @@ def filter_book_data(volume_info):
     if not authors or all(author == "Unknown" for author in authors):
         return None
     
-    # Enhanced description validation
-    if len(description) < 100:  # Increased minimum length
-        return None
-    
     # Category and keyword validation
     design_keywords = {
         'design', 'art', 'graphic', 'typography', 'layout'
