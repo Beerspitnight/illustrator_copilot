@@ -33,75 +33,25 @@ def index():
     return jsonify({"status": "running", "message": "Welcome to the Ill-Co-P Learns API!"}), 200
 
 def filter_book_data(volume_info):
-    """Helper function to filter and validate book data with enhanced criteria"""
-    # Required fields with cleaning
-    title = volume_info.get("title", "").strip()
-    authors = volume_info.get("authors", [])
-    description = volume_info.get("description", "").strip()
-    categories = volume_info.get("categories", [])
+    """Extract relevant book information and format description."""
     
-    # Optional fields with defaults
-    published_date = volume_info.get("publishedDate", "Unknown")
-    info_link = volume_info.get("infoLink", "#")
-    page_count = volume_info.get("pageCount", 0)
-    
-    # Validation rules
-    if not title or title == "Unknown":
-        return None
-    
-    if not authors or all(author == "Unknown" for author in authors):
-        return None
-    
-    # Category and keyword validation
-    design_keywords = {
-        'design', 'art', 'graphic', 'typography', 'layout'
-    }
-    
-    # Enhanced description validation
-    # Minimum description length is set to ensure substantive content.
-    # This value can be adjusted as needed.
-    MIN_DESCRIPTION_LENGTH = 100
-    if len(description) < MIN_DESCRIPTION_LENGTH:
-        return None
-    
-    # Check if any design-related keywords appear in title or categories
-    title_lower = title.lower()
-    has_design_focus = any(keyword in title_lower for keyword in design_keywords)
-    
-    if categories:
-        has_design_focus = has_design_focus or any(
-            any(keyword in cat.lower() for keyword in design_keywords)
-            for cat in categories
-        )
-    
-    if not has_design_focus:
-        return None
-    
-    # Minimum page count for substantive content
-    if page_count and page_count < 50:
-        return None
-    
-    # Format description with proper sentence trimming
-    formatted_description = description
-    last_period = formatted_description.rfind('.')
-    
-    if len(description) > 500:
-        if last_period > 0 and last_period <= 500:
-            # Trim at the last complete sentence within 500 chars
-            formatted_description = formatted_description[:last_period + 1]
-        else:
-            # If no suitable sentence break, just trim at 500
-            formatted_description = formatted_description[:500]
-        formatted_description += "..."
-    
+    title = volume_info.get("title", "Unknown Title")
+    authors = volume_info.get("authors", ["Unknown Author"])
+    description = volume_info.get("description", "")
+
+    # Initialize last_period with a default value
+    last_period = -1
+
+    # Only try to find the last period if we have a description
+    if description:
+        last_period = description.rfind(".")
+        if last_period > 400:  # Only trim at sentence if it's not too short
+            description = description[: last_period + 1]
+
     return {
         "title": title,
-        "author": ", ".join(authors),
-        "published_date": published_date,
-        "description": formatted_description,
-        "info_link": info_link,
-        "categories": categories if categories else ["Uncategorized"],
-        "page_count": page_count if page_count else "Unknown"
+        "authors": ", ".join(authors),
+        "description": description,
     }
 
 def save_results_to_csv(books, query):
@@ -138,23 +88,11 @@ def save_results_to_csv(books, query):
         logger.error(f"Error saving results to CSV: {str(e)}", exc_info=True)
         return None
 
-@app.route('/search_books', methods=['GET'])
+@app.route("/search_books", methods=["GET"])
 def search_books():
-    """
-    Endpoint to search for books using the Google Books API.
-
-    Query Parameters:
-    - query (str): The search term to query books.
-
-    Returns:
-    - JSON response containing a list of books with their title, author(s),
-      published date, description, and info link.
-    - HTTP 400 if the query parameter is missing.
-    - HTTP 500 if there is an issue with the Google Books API response.
-    """
-    query = request.args.get('query')
+    query = request.args.get("query", "")
     if not query:
-        return jsonify({"error": "Query parameter is required"}), 400
+        return jsonify({"error": "No search query provided"}), 400
 
     google_books_url = "https://www.googleapis.com/books/v1/volumes"
     params = {"q": query, "key": GOOGLE_BOOKS_API_KEY}
@@ -167,21 +105,22 @@ def search_books():
         return jsonify({"error": "Invalid JSON response from Google Books API."}), 500
 
     if not isinstance(data, dict):
-        return jsonify({"error": "Invalid response from Google Books API.", "raw_response": data}), 500
+        return jsonify({
+            "error": "Unexpected response format from Google Books API. Expected a dictionary.",
+            "raw_response": data
+        }), 500
 
     if "items" not in data:
-        return jsonify([]), 200
-
+        return jsonify({"error": "No books found"}), 404
+        
     books = []
     for item in data["items"]:
+        if len(books) >= 10:  # Stop iterating once 10 books are collected
+            break
         volume_info = item.get("volumeInfo", {})
         book_data = filter_book_data(volume_info)
-        
         if book_data:
             books.append(book_data)
-            
-        if len(books) >= 10:
-            break
 
     # Save results to CSV and handle the response
     csv_filename = None
@@ -208,29 +147,20 @@ def search_books():
 def list_results():
     """List all saved CSV results files"""
     try:
-        files = os.listdir(RESULTS_DIR)
-        csv_files = [f for f in files if f.endswith('.csv')]
+        if not os.path.exists(RESULTS_DIR):
+            return jsonify({
+                "error": "Results directory does not exist.",
+                "directory": RESULTS_DIR
+            }), 404
+        result_files = [f for f in os.listdir(RESULTS_DIR) if f.endswith('.csv')]
         return jsonify({
-            "files": csv_files,
-            "count": len(csv_files),
+            "files": result_files,
+            "count": len(result_files),
             "directory": RESULTS_DIR
         })
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-@app.route('/download_results/<filename>', methods=['GET'])
-def download_results(filename):
-    """Download a specific CSV file"""
-    try:
-        return send_from_directory(
-            RESULTS_DIR,
-            filename,
-            as_attachment=True,
-            mimetype='text/csv'
-        )
     except Exception as e:
-        return jsonify({"error": f"File not found: {str(e)}"}), 404
-
+        return jsonify({"error": str(e)}), 500
 if __name__ == "__main__":
     port_env = os.environ.get("PORT", "5000")
     try:
