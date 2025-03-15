@@ -58,7 +58,9 @@ def filter_book_data(volume_info):
     
     # Category and keyword validation
     design_keywords = {
-        'design', 'art', 'graphic', 'typography', 'layout',
+        'design', 'art', 'graphic', 'typography', 'layout'
+    }
+    
     # Enhanced description validation
     # Minimum description length is set to ensure substantive content.
     # This value can be adjusted as needed.
