@@ -159,8 +159,8 @@ def list_results():
             "directory": RESULTS_DIR
         })
     except Exception as e:
-    except Exception as e:
         return jsonify({"error": str(e)}), 500
+   # --- Debugging Route
 if __name__ == "__main__":
     port_env = os.environ.get("PORT", "5000")
     try:
