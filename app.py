@@ -21,6 +21,37 @@ def index():
             "status": "configuration_error",
             "message": "API key not configured. Please set GOOGLE_BOOKS_API_KEY environment variable."
         }), 503
+
+def filter_book_data(volume_info):
+    """Helper function to filter and validate book data"""
+    # Required fields
+    title = volume_info.get("title", "").strip()
+    authors = volume_info.get("authors", [])
+    description = volume_info.get("description", "").strip()
+    
+    # Optional fields with defaults
+    published_date = volume_info.get("publishedDate", "Unknown")
+    info_link = volume_info.get("infoLink", "#")
+    
+    # Validation rules
+    if not title or title == "Unknown":
+        return None
+    
+    if not authors or all(author == "Unknown" for author in authors):
+        return None
+        
+    if len(description) < 50:  # Minimum description length
+        return None
+        
+    # Clean and format the data
+    return {
+        "title": title,
+        "author": ", ".join(authors),
+        "published_date": published_date,
+        "description": description[:500] + "..." if len(description) > 500 else description,
+        "info_link": info_link
+    }
+
 @app.route('/search_books', methods=['GET'])
 def search_books():
     """
@@ -58,25 +89,16 @@ def search_books():
     books = []
     for item in data["items"]:
         volume_info = item.get("volumeInfo", {})
-
-        title = volume_info.get("title", "Unknown")
-        authors = volume_info.get("authors", ["Unknown"])
-        description = volume_info.get("description", "").strip()
-        info_link = volume_info.get("infoLink", "#")
-
-        # Filter out bad results
-        if "Unknown" in authors or not description:
-            continue
+        book_data = filter_book_data(volume_info)
         
-        books.append({
-            "title": title,
-            "author": ", ".join(authors),
-            "published_date": volume_info.get("publishedDate", "Unknown"),
-            "description": description,
-            "info_link": info_link
-        })
+        if book_data:
+            books.append(book_data)
+            
+        # Limit results to prevent overwhelming responses
+        if len(books) >= 10:
+            break
 
-    # Pretty-print response
+    logger.info(f"Filtered {len(data['items'])} books to {len(books)} quality results")
     return jsonify(books), 200
 
 
