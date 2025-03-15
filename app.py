@@ -6,6 +6,8 @@ app = Flask(__name__)
 
 # Google Books API Key from Heroku Config Vars
 GOOGLE_BOOKS_API_KEY = os.getenv("GOOGLE_BOOKS_API_KEY")
+if not GOOGLE_BOOKS_API_KEY:
+    raise RuntimeError("GOOGLE_BOOKS_API_KEY environment variable is not set. Please configure it before running the application.")
 
 @app.route('/')
 def index():
@@ -15,27 +17,42 @@ def index():
 def search_books():
     query = request.args.get('query')
     if not query:
-        return jsonify({"error": "Please provide a search term."}), 400
+        return jsonify({"error": "Query parameter is required"}), 400
+        
+    google_books_url = "https://www.googleapis.com/books/v1/volumes"
+    params = {"q": query, "key": GOOGLE_BOOKS_API_KEY}
+    response = requests.get(google_books_url, params=params)
 
-    google_books_url = f"https://www.googleapis.com/books/v1/volumes?q={query}&key={GOOGLE_BOOKS_API_KEY}"
+    app.logger.debug("API Response received from Google Books API.")
+    try:
+        data = response.json()
+    except ValueError:
+        return jsonify({"error": "Invalid JSON response from Google Books API."}), 500
 
-    response = requests.get(google_books_url)
-    data = response.json()
+    if not isinstance(data, dict) or "items" not in data:
+        return jsonify({"error": "No books found or API issue.", "raw_response": data}), 500
+        return jsonify({"error": "No books found or API issue.", "raw_response": data}), 500
 
     books = []
-    if "items" in data:
-        for item in data["items"]:
-            volume_info = item.get("volumeInfo", {})
-            books.append({
-                "title": volume_info.get("title", "No title available"),
-                "author": ", ".join(volume_info.get("authors", ["Unknown"])),
-                "published_date": volume_info.get("publishedDate", "Unknown"),
-                "description": volume_info.get("description", "No description available"),
-                "info_link": volume_info.get("infoLink", "#")
-            })
+    for item in data["items"]:
+        volume_info = item.get("volumeInfo", {})
+        books.append({
+            "title": volume_info.get("title", "Unknown"),
+            "author": ", ".join(volume_info.get("authors", ["Unknown"])),
+            "published_date": volume_info.get("publishedDate", "Unknown"),
+            "description": volume_info.get("description", "No description available"),
+            "info_link": volume_info.get("infoLink", "#")
+        })
 
     return jsonify(books)
 
+
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
+    port_env = os.environ.get("PORT", "5000")
+    try:
+        port = int(port_env)
+        if port <= 0 or port > 65535:
+            raise ValueError("Port number must be between 1 and 65535.")
+    except ValueError:
+        raise RuntimeError(f"Invalid PORT environment variable: {port_env}. Please set it to a valid integer between 1 and 65535.")
     app.run(host="0.0.0.0", port=port)
