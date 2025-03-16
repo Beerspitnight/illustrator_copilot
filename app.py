@@ -87,6 +87,7 @@ def upload_to_google_drive(file_path, file_name):
         return None
     
 def save_results_to_temp_csv(books, query):
+     logger.info("save_results_to_temp_csv function CALLED!") # Added log
     # Sanitize the query to ensure a valid filename
     sanitized_query = "".join(c for c in query if c.isalnum() or c in (' ', '-', '_')).strip()
     file_name = f"search_results_{sanitized_query}.csv"
