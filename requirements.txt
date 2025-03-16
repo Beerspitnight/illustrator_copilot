@@ -35,6 +35,7 @@ requests==2.32.3
 requests-oauthlib==2.0.0
 rsa==4.9
 simple-websocket==1.1.0
+tenacity==9.0.0
 uritemplate==4.1.1
 urllib3==2.3.0
 Werkzeug==3.1.3
