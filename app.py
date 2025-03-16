@@ -65,10 +65,13 @@ def get_drive_service():
 def upload_to_google_drive(file_path, file_name):
     """Uploads a CSV file to Google Drive and returns the shareable link."""
     service = get_drive_service()
+    logger.info(f"Attempting to upload file: {file_name} from path: {file_path}") # Added log
     try:
         file_metadata = {'name': file_name}
         media = MediaFileUpload(file_path, mimetype='text/csv', resumable=True)
+        logger.info("Creating Google Drive file...") # Added log
         file = service.files().create(body=file_metadata, media_body=media, fields="id").execute()
+        logger.info("Google Drive file created, setting permissions...") # Added log
         file_id = file.get("id")
 
         # Make the file publicly accessible
@@ -76,14 +79,13 @@ def upload_to_google_drive(file_path, file_name):
             fileId=file_id,
             body={"role": "reader", "type": "anyone"},
         ).execute()
+        logger.info(f"File permissions set, shareable link generated.") # Added log
 
         return f"https://drive.google.com/file/d/{file_id}/view?usp=sharing"
     except Exception as e:
         logger.error(f"Error uploading file to Google Drive or setting permissions: {e}", exc_info=True)
         return None
-
-    return f"https://drive.google.com/file/d/{file_id}/view?usp=sharing"
-
+    
 def save_results_to_temp_csv(books, query):
     # Sanitize the query to ensure a valid filename
     sanitized_query = "".join(c for c in query if c.isalnum() or c in (' ', '-', '_')).strip()
