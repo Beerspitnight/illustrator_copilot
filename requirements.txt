@@ -44,3 +44,4 @@ tenacity
 flask-compress 
 pydantic
 pydantic-settings
+ratelimit 
