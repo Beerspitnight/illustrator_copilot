@@ -262,27 +262,36 @@ def filter_book_data(volume_info):
     """Extract relevant book information and format description."""
     
     title = volume_info.get("title", "Unknown Title")
-    authors = volume_info.get("authors", ["Unknown Author"]) # Get authors (could be list or string)
+    authors_raw = volume_info.get("authors", ["Unknown Author"])  # Get raw authors data
+    
+    logger.info(f"Raw authors data from Google Books API: {authors_raw}")  # Log raw authors data
+    
+    # Forcefully ensure authors is ALWAYS a list of strings
+    if isinstance(authors_raw, str):  # Check if authors_raw is a string
+        authors = [authors_raw]       # Convert it to a list containing that string
+    elif isinstance(authors_raw, list):  # If it's already a list
+        authors = [str(author) for author in authors_raw]  # Convert each element to string just to be safe
+    else:  # Fallback for unexpected types
+        authors = ["Unknown Author"]  # Default to Unknown Author list
+    
+    logger.info(f"Processed authors data: {authors}")  # Log processed authors data
+    
     description = volume_info.get("description", "")
     
-    # Ensure authors is ALWAYS a list of strings
-    if isinstance(authors, str): # Check if authors is a string (not a list)
-        authors = [authors]       # Convert it to a list containing that string
-    elif not isinstance(authors, list): # Fallback in case it's neither string nor list (unlikely, but for robustness)
-        authors = ["Unknown Author"]  # Default to Unknown Author list
-    # Use pre-compiled regex to efficiently truncate the description at the last complete sentence
+    # Use pre-compiled regex to efficiently truncate the description
     if description:
         match = DESCRIPTION_TRUNCATION_REGEX.search(description)
         if match:
             description = match.group(1)
+    
     if description:
         last_period = description.rfind(".")
         if last_period > 400:  # Only trim at sentence if it's not too short
             description = description[: last_period + 1]
-
+    
     return {
         "title": title,
-        "authors": authors, # authors is now guaranteed to be a list of strings
+        "authors": authors,  # authors is now guaranteed to be a list of strings
         "description": description,
     }
 
