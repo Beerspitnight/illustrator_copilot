@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, g
+from flask import Flask, request, jsonify, g, redirect, url_for, Blueprint
 from datetime import datetime
 import os
 import requests
@@ -46,6 +46,9 @@ def create_app():
     # Initialize extensions
     compress = Compress()
     compress.init_app(app)
+    
+    # Register blueprint
+    app.register_blueprint(api_v1)
     
     return app, settings
 
@@ -238,12 +241,16 @@ def index():
         <p>The API is running successfully.</p>
         <h2>Available Endpoints:</h2>
         <div class="endpoint">
-            <p><strong>Search Books:</strong> /search_books?query=your_search_term</p>
-            <p>Example: <a href="/search_books?query=design">/search_books?query=design</a></p>
+            <p><strong>Search Books:</strong> /api/v1/search_books?query=your_search_term</p>
+            <p>Example: <a href="/api/v1/search_books?query=design">/api/v1/search_books?query=design</a></p>
         </div>
         <div class="endpoint">
-            <p><strong>List Results:</strong> /list_results</p>
-            <p>Example: <a href="/list_results">/list_results</a></p>
+            <p><strong>List Results:</strong> /api/v1/list_results</p>
+            <p>Example: <a href="/api/v1/list_results">/api/v1/list_results</a></p>
+        </div>
+        <div class="endpoint">
+            <p><strong>Health Check:</strong> /health</p>
+            <p>Example: <a href="/health">/health</a></p>
         </div>
     </body>
     </html>
@@ -255,8 +262,14 @@ def filter_book_data(volume_info):
     """Extract relevant book information and format description."""
     
     title = volume_info.get("title", "Unknown Title")
-    authors = volume_info.get("authors", ["Unknown Author"])
+    authors = volume_info.get("authors", ["Unknown Author"]) # Get authors (could be list or string)
     description = volume_info.get("description", "")
+    
+    # Ensure authors is ALWAYS a list of strings
+    if isinstance(authors, str): # Check if authors is a string (not a list)
+        authors = [authors]       # Convert it to a list containing that string
+    elif not isinstance(authors, list): # Fallback in case it's neither string nor list (unlikely, but for robustness)
+        authors = ["Unknown Author"]  # Default to Unknown Author list
     # Use pre-compiled regex to efficiently truncate the description at the last complete sentence
     if description:
         match = DESCRIPTION_TRUNCATION_REGEX.search(description)
@@ -269,7 +282,7 @@ def filter_book_data(volume_info):
 
     return {
         "title": title,
-        "authors": ", ".join(authors),
+        "authors": authors, # authors is now guaranteed to be a list of strings
         "description": description,
     }
 
@@ -320,7 +333,9 @@ def save_results_to_csv(books, query):
         logger.error(f"Error saving results to CSV: {str(e)}", exc_info=True)
         return None
 
-@app.route("/api/v1/search_books")
+api_v1 = Blueprint('api_v1', __name__, url_prefix='/api/v1')
+
+@api_v1.route("/search_books")
 def search_books():
     query = request.args.get("query", "").strip()
     if not query or len(query) < 2:
@@ -338,34 +353,14 @@ def search_books():
 
     books = fetch_books_from_google(query)  # Existing function to fetch books
     # Validate and structure the book data using BookResponse
-    validated_books = [BookResponse(**book).dict() for book in books]
-    validated_books = [BookResponse(**book).dict() for book in books]
+    validated_books = [BookResponse(**book).model_dump() for book in books]
     drive_link = save_results_to_temp_csv(books, query) # <-- CORRECT LINE - Call save_results_to_temp_csv
     if drive_link is None:
         logger.error("Failed to save results to CSV or upload to Google Drive")
         return jsonify({"error": "Failed to save results to CSV or upload to Google Drive"}), 500
     return jsonify({"books": validated_books, "csv_link": drive_link})
 
-@app.route('/health')
-def health_check():
-    """Health check endpoint for monitoring"""
-    try:
-        # Test Google Books API connection
-        fetch_books_from_google("test")
-        # Test Google Drive connection
-        try:
-            service = get_drive_service()
-            logger.info("Drive service test successful")
-        except Exception as e:
-            logger.error(f"Drive service test failed: {str(e)}")
-        return jsonify({"status": "healthy"}), 200
-    except Exception as e:
-        return jsonify({
-            "status": "unhealthy",
-            "error": str(e)
-        }), 503
-
-@app.route("/api/v1/list_results")
+@api_v1.route("/list_results")
 def list_results():
     try:
         # Check if the results directory exists
@@ -386,6 +381,11 @@ def list_results():
     except Exception as e:
         logger.error(f"Error listing results: {str(e)}")
         return jsonify({"error": str(e)}), 500
+
+@app.route("/search_books")
+def legacy_search_books():
+    """Redirect old endpoint to new versioned endpoint"""
+    return redirect(url_for('search_books', **request.args))
 
 def validate_port(port_str):
     if not port_str.isdigit():
