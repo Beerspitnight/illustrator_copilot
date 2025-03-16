@@ -12,8 +12,14 @@ import re
 import uuid
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
+from pydantic import BaseModel
 from google.oauth2 import service_account
 from flask_compress import Compress
+
+class BookResponse(BaseModel):
+    title: str
+    authors: list[str]
+    description: str | None = None
 
 # config.py
 from pydantic_settings import BaseSettings
@@ -29,6 +35,8 @@ class Settings(BaseSettings):
 
 def get_settings():
     return Settings()
+
+api_v1 = Blueprint('api_v1', __name__, url_prefix='/api/v1')
 
 def create_app():
     """Application factory pattern"""
@@ -62,12 +70,11 @@ logger = logging.getLogger(__name__)
 def before_request():
     g.request_id = request.headers.get('X-Request-ID', str(uuid.uuid4()))
     logger.info(f"Processing request {g.request_id}")
+# Removed redundant check for settings being None
 
-# Google Books API Key with graceful fallback - MOVED BEFORE ANY ROUTES
 GOOGLE_BOOKS_API_KEY = settings.GOOGLE_BOOKS_API_KEY
 if not GOOGLE_BOOKS_API_KEY or (isinstance(GOOGLE_BOOKS_API_KEY, str) and GOOGLE_BOOKS_API_KEY.strip() == ""):
     raise RuntimeError("GOOGLE_BOOKS_API_KEY is not set. Application cannot start without it.")
-
 RESULTS_DIR = os.path.join(os.getcwd(), "learning", "Results")
 os.makedirs(RESULTS_DIR, exist_ok=True)  # Ensure directory exists
 
@@ -76,24 +83,25 @@ from functools import lru_cache
 from ratelimit import limits, sleep_and_retry, RateLimitException
 
 @sleep_and_retry
-@limits(calls=100, period=60)  # 100 calls per minute
-@lru_cache(maxsize=128)  # Cache results
-@retry(stop=stop_after_attempt(5), wait=wait_exponential(multiplier=1, min=2, max=10))
+@sleep_and_retry
+@limits(calls=100, period=60)  # Add rate limiting
 def fetch_books_from_google(query):
     """Fetch books from Google Books API with rate limiting and caching."""
+    if not query or not isinstance(query, str) or len(query.strip()) == 0:
+        raise ValueError("Query parameter must be a non-empty string.")
+    
     url = f"https://www.googleapis.com/books/v1/volumes?q={query}&key={GOOGLE_BOOKS_API_KEY}"
     try:
         response = requests.get(url)
         response.raise_for_status()
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Error fetching data from Google Books API: {e}")
-        raise  # Retry on transient errors
+        data = response.json()
+        return [filter_book_data(item["volumeInfo"]) for item in data.get("items", [])]
     except RateLimitException as e:
         logger.warning(f"Rate limit exceeded: {e}")
-        raise  # Retry on rate-limit errors
-    data = response.json()
-    return [filter_book_data(item["volumeInfo"]) for item in data.get("items", [])]
-
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching books: {e}")
+        raise
 logger.info(f"Results directory: {RESULTS_DIR}")
 logger.info(f"Application root: {os.path.dirname(__file__)}")
 logger.info(f"Running on Heroku: {bool(os.getenv('HEROKU'))}")
@@ -111,8 +119,15 @@ def get_drive_service():
     google_credentials = app.config['GOOGLE_APPLICATION_CREDENTIALS']
     if not google_credentials:
         logger.error("GOOGLE_APPLICATION_CREDENTIALS environment variable is not set")
-        raise RuntimeError("GOOGLE_APPLICATION_CREDENTIALS is not set")
-    
+        # Validate if the string is base64-encoded
+        try:
+            base64.b64decode(google_credentials, validate=True)
+        except binascii.Error:
+            logger.error("GOOGLE_APPLICATION_CREDENTIALS is not a valid base64-encoded string")
+            raise RuntimeError("GOOGLE_APPLICATION_CREDENTIALS must be a valid base64-encoded string.")
+        
+        # Decode and parse credentials
+        creds_json = base64.b64decode(google_credentials).decode("utf-8")
     try:
         # Decode and parse credentials
         creds_json = base64.b64decode(google_credentials).decode("utf-8")
@@ -131,7 +146,9 @@ def get_drive_service():
         
     except (binascii.Error, json.JSONDecodeError) as e:
         logger.error(f"Invalid GOOGLE_APPLICATION_CREDENTIALS format: {str(e)}")
-        raise RuntimeError("GOOGLE_APPLICATION_CREDENTIALS must be a valid base64-encoded JSON string.")
+    except Exception as e:
+        logger.error(f"Failed to upload file to Google Drive: {e}", exc_info=True)
+        raise GoogleDriveError(f"Error uploading file to Google Drive: {e}")
     except Exception as e:
         logger.error(f"Failed to create Drive service: {str(e)}")
         raise GoogleDriveError(f"Drive service creation failed: {str(e)}")
@@ -162,43 +179,59 @@ def upload_to_google_drive(file_path, file_name):
         raise GoogleDriveError(f"File not found: {file_path}")
     
     service = get_drive_service()
-    logger.info(f"Attempting to upload file: {file_name} from path: {file_path}") # Added log
+    logger.info(f"Attempting to upload file: {file_name} from path: {file_path}")
+    
     try:
         file_metadata = {'name': file_name}
-        media = MediaFileUpload(file_path, mimetype='text/csv', resumable=True)
-        logger.info("Creating Google Drive file...") # Added log
-        file = service.files().create(body=file_metadata, media_body=media, fields="id").execute()
-        logger.info("Google Drive file created, setting permissions...") # Added log
-        file_id = file.get("id")
+        media = MediaFileUpload(file_path, resumable=True)
+        file = service.files().create(body=file_metadata, media_body=media, fields='id').execute()
+        file_id = file.get('id')
 
-        # Make the file publicly accessible
-        try:
+        if not file_id:
+            raise GoogleDriveError("Failed to get file ID after upload")
+
+        # Make the file publicly accessible with retry logic
+        @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
+        def set_file_permissions():
             service.permissions().create(
                 fileId=file_id,
-                body={"role": "reader", "type": "anyone"},
+                body={"role": "reader", "type": "anyone"}
             ).execute()
-            logger.info(f"File permissions set, shareable link generated.") # Added log
+
+        try:
+            set_file_permissions()
+            logger.info("File permissions set, shareable link generated.")
+            return f"https://drive.google.com/file/d/{file_id}/view?usp=sharing"
         except Exception as e:
             logger.error(f"Error setting file permissions: {e}", exc_info=True)
             return None
 
-        return f"https://drive.google.com/file/d/{file_id}/view?usp=sharing"
     except Exception as e:
-        raise GoogleDriveError(f"Upload failed: {str(e)}")
-    
+        logger.error(f"Error uploading file: {e}", exc_info=True)
+        return None
+
 def save_results_to_temp_csv(books, query):
-    logger.info("save_results_to_temp_csv function CALLED!") # Added log
-    file_path = None
+    logger.info("save_results_to_temp_csv function CALLED!")
+    if not books:
+        logger.warning("No books found for the given query.")
+        return None
+
     try:
-        # Sanitize the query to ensure a valid filename
-        sanitized_query = "".join(c for c in query if c.isalnum() or c in (' ', '-', '_')).strip()
-        file_name = f"search_results_{sanitized_query}.csv"
-        file_path = os.path.join(tempfile.gettempdir(), file_name)  # Use tempfile.gettempdir() for portability
-        
-        # Check if books is None or empty
-        if not books:
-            logger.warning("No books found for the given query.")
-            return None
+        # Create a temporary file
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.csv')
+        file_path = temp_file.name
+        file_name = f'search_results_{query}_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv'
+
+        # Validate that books is a list of dictionaries with the expected keys
+        if not isinstance(books, list) or not all(isinstance(book, dict) for book in books):
+            logger.error("Invalid data type for books. Expected a list of dictionaries.")
+            raise ValueError("Books must be a list of dictionaries.")
+
+        expected_keys = {"title", "authors", "description"}
+        for book in books:
+            if not expected_keys.issubset(book.keys()):
+                logger.error(f"Book entry missing required keys: {book}")
+                raise ValueError(f"Each book must contain the keys: {expected_keys}")
 
         with open(file_path, "w", newline="", encoding="utf-8") as file:
             writer = csv.DictWriter(file, fieldnames=["title", "authors", "description"])
@@ -207,14 +240,11 @@ def save_results_to_temp_csv(books, query):
 
         return upload_to_google_drive(file_path, file_name)
     finally:
-        if file_path and os.path.exists(file_path):
+        if 'file_path' in locals() and os.path.exists(file_path):
             try:
                 os.remove(file_path)
             except OSError:
                 logger.warning(f"Failed to remove temporary file: {file_path}")
-
-@app.route('/')
-def index():
     """Single index route that returns HTML for better browser display"""
     logger.info("Index route accessed!")
     if not GOOGLE_BOOKS_API_KEY:
@@ -284,10 +314,7 @@ def filter_book_data(volume_info):
         if match:
             description = match.group(1)
     
-    if description:
-        last_period = description.rfind(".")
-        if last_period > 400:  # Only trim at sentence if it's not too short
-            description = description[: last_period + 1]
+    # The regex truncation already handles description truncation.
     
     return {
         "title": title,
@@ -350,24 +377,32 @@ def search_books():
     if not query or len(query) < 2:
         return jsonify({"error": "Query must be at least 2 characters"}), 400
 
-    # Sanitize query to allow only alphanumeric characters, spaces, and safe symbols
-    if not re.match(r'^[a-zA-Z0-9 _-]+$', query):
-        return jsonify({"error": "Query contains invalid characters"}), 400
-    
     # Add pagination
     per_page = request.args.get("per_page", default=10, type=int)
-    
     if not (0 < per_page <= 40):  # Google Books API limit
         return jsonify({"error": "per_page must be between 1 and 40"}), 400
 
-    books = fetch_books_from_google(query)  # Existing function to fetch books
-    # Validate and structure the book data using BookResponse
-    validated_books = [BookResponse(**book).model_dump() for book in books]
-    drive_link = save_results_to_temp_csv(books, query) # <-- CORRECT LINE - Call save_results_to_temp_csv
-    if drive_link is None:
-        logger.error("Failed to save results to CSV or upload to Google Drive")
-        return jsonify({"error": "Failed to save results to CSV or upload to Google Drive"}), 500
-    return jsonify({"books": validated_books, "csv_link": drive_link})
+    # Fetch books
+    try:
+        books = fetch_books_from_google(query)
+        
+        # Validate and structure the book data
+        validated_books = []
+        for book in books:
+            try:
+                validated_books.append(BookResponse(**book).model_dump())
+            except Exception as e:
+                logger.error(f"Validation error for book data: {book}. Error: {e}")
+                continue
+        
+        drive_link = save_results_to_temp_csv(validated_books, query)
+        if drive_link is None:
+            return jsonify({"error": "Failed to save results to CSV or upload to Google Drive"}), 500
+            
+        return jsonify({"books": validated_books, "csv_link": drive_link})
+    except Exception as e:
+        logger.error(f"Error in search_books: {e}")
+        return jsonify({"error": str(e)}), 500
 
 @api_v1.route("/list_results")
 def list_results():
@@ -389,7 +424,7 @@ def list_results():
         })
     except Exception as e:
         logger.error(f"Error listing results: {str(e)}")
-        return jsonify({"error": str(e)}), 500
+    return redirect(url_for('api_v1.search_books', **request.args))
 
 @app.route("/search_books")
 def legacy_search_books():
@@ -408,24 +443,26 @@ if __name__ == "__main__":
     port_env = os.environ.get("PORT", "5000")
     try:
         port = validate_port(port_env)
-        app.run(host="0.0.0.0", port=port, debug=False)
+        debug_mode = os.environ.get("FLASK_ENV", "production") == "development"
+        app.run(host="0.0.0.0", port=port, debug=debug_mode)
     except (ValueError, RuntimeError) as e:
-        logger.error(f"Failed to start server: {str(e)}")
+        logger.error(f"Failed to start application: {e}")
         raise
-
-from pydantic import BaseModel, Field
-from typing import List, Optional
-
-class BookResponse(BaseModel):
-    title: str
-    authors: List[str]
-    description: Optional[str]
-    
+if __name__ == "__main__":
+    port_env = os.environ.get("PORT", "5000")
+    try:
+        port = validate_port(port_env)
+        debug_mode = os.environ.get("FLASK_ENV", "production") == "development"
+        app.run(host="0.0.0.0", port=port, debug=debug_mode)
+    except (ValueError, RuntimeError) as e:
+        raise e
     class Config:
         schema_extra = {
             "example": {
                 "title": "The Great Gatsby",
                 "authors": ["F. Scott Fitzgerald"],
-                "description": "A story of the American dream..."
+                "description": "A story of the American dream...",
+                "categories": ["Fiction", "Classic"],
+                "publisher": "Scribner"
             }
         }
