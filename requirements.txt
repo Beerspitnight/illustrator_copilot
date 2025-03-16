@@ -43,3 +43,4 @@ wsproto==1.2.0
 tenacity 
 flask-compress 
 pydantic
+pydantic-settings

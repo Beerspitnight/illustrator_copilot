@@ -16,7 +16,7 @@ from google.oauth2 import service_account
 from flask_compress import Compress
 
 # config.py
-from pydantic import BaseSettings
+from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     GOOGLE_BOOKS_API_KEY: str
@@ -27,7 +27,8 @@ class Settings(BaseSettings):
     class Config:
         env_file = '.env'
 
-from config.settings import get_settings
+def get_settings():
+    return Settings()
 
 def create_app():
     """Application factory pattern"""
