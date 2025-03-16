@@ -8,4 +8,5 @@ __pycache__/
 *.py[cod]
 
 # Ignore environment/config files
+credentials.json
 .env
