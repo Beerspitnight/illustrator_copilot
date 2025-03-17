@@ -105,12 +105,57 @@ def initialize_extensions(app):
 
 def setup_routes(app):
     """Set up routes and blueprints."""
+    # Register the blueprint routes
     register_routes(api_v1)
     app.register_blueprint(api_v1)
 
+    # Register core routes
     @app.route("/")
     def index():
         return "<h1>Welcome to the LibraryCloud API!</h1>"
+
+    @app.route("/test_drive")
+    def test_drive():
+        try:
+            service = get_drive_service()
+            about = service.about().get(fields="user,storageQuota").execute()
+            return jsonify({
+                "success": True,
+                "user": about.get("user", {}),
+                "quota": about.get("storageQuota", {})
+            })
+        except Exception as e:
+            logger.error(f"Drive test failed: {str(e)}", exc_info=True)
+            return jsonify({
+                "success": False,
+                "error": str(e)
+            }), 500
+
+    @app.route("/verify_credentials")
+    def verify_credentials():
+        """Verify Google Drive credentials configuration."""
+        try:
+            creds = app.config['GOOGLE_APPLICATION_CREDENTIALS']
+            # Try to decode if it's base64
+            try:
+                decoded = base64.b64decode(creds).decode('utf-8') if creds else None
+            except:
+                decoded = None
+                
+            return jsonify({
+                "success": True,
+                "credentials_set": bool(creds),
+                "credentials_type": str(type(creds)),
+                "credentials_length": len(str(creds)) if creds else 0,
+                "credentials_preview": str(creds)[:50] + "..." if creds else None,
+                "decoded_preview": str(decoded)[:50] + "..." if decoded else None
+            })
+        except Exception as e:
+            logger.error(f"Credential verification failed: {str(e)}", exc_info=True)
+            return jsonify({
+                "success": False,
+                "error": str(e)
+            }), 500
 
 # Create app instance
 app, settings = create_app()
@@ -485,24 +530,6 @@ def validate_port(port_str):
     if port <= 0 or port > 65535:
         raise ValueError("Port number must be between 1 and 65535.")
     return port
-
-# Add this temporary debug code at the top of your route
-@app.route("/test_drive")
-def test_drive():
-    try:
-        service = get_drive_service()
-        about = service.about().get(fields="user,storageQuota").execute()
-        return jsonify({
-            "success": True,
-            "user": about.get("user", {}),
-            "quota": about.get("storageQuota", {})
-        })
-    except Exception as e:
-        logger.error(f"Drive test failed: {str(e)}", exc_info=True)
-        return jsonify({
-            "success": False,
-            "error": str(e)
-        }), 500
 
 # Run the app
 if __name__ == "__main__":
