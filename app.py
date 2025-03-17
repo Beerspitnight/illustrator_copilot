@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, g, redirect, url_for, Blueprint
+from flask import Flask, request, jsonify, g, redirect, url_for, Blueprint, send_from_directory, safe_join
 from datetime import datetime
 import os
 import requests
@@ -80,6 +80,8 @@ def create_app():
         CACHE_TIMEOUT=settings.CACHE_TIMEOUT
     )
 
+    app.config['RESULTS_DIR'] = os.path.join(app.root_path, "learning", "Results")
+
     # Initialize extensions
     compress = Compress()
     compress.init_app(app)
@@ -153,6 +155,27 @@ def list_results():
     except Exception as e:
         logger.exception(f"Error listing results: {str(e)}")
         return jsonify({"error": "An unexpected error occurred while listing results"}), 500
+
+@app.route("/get_file")
+def get_file():
+    filename = request.args.get("filename")  # Get filename from query params
+    if not filename:
+        return jsonify({"error": "Filename parameter is required"}), 400
+
+    results_dir = app.config["RESULTS_DIR"]
+
+    try:
+        filepath = safe_join(results_dir, filename)
+        if filepath is None:
+            return jsonify({"error": "Invalid filename"}), 400
+        
+        # Check if file exists
+        if not os.path.exists(filepath):
+            return jsonify({"error": "File not found"}), 404
+
+        return send_from_directory(results_dir, filename)
+    except ValueError:
+        return jsonify({"error": "Invalid filename"}), 400
 
 # Define before_request function
 @app.before_request
