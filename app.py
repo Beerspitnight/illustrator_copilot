@@ -458,7 +458,7 @@ def upload_to_google_drive(file_path, file_name):
 
         logger.info(f"File uploaded successfully with ID: {file_id}")
 
-        # Make the file publicly accessible and transfer ownership
+        # Make the file publicly accessible
         @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
         def set_file_permissions():
             logger.info(f"Setting permissions for file ID: {file_id}")
@@ -466,21 +466,24 @@ def upload_to_google_drive(file_path, file_name):
             # Make file public
             public_permission = service.permissions().create(
                 fileId=file_id,
-                body={"role": "reader", "type": "anyone"}
+                body={
+                    "role": "writer",  # Changed from reader to writer
+                    "type": "anyone"
+                }
             ).execute()
             logger.info(f"Public permission result: {public_permission}")
-            
-            # Give ownership to iwasonamountian@gmail.com
-            owner_permission = service.permissions().create(
+
+            # Add specific user permission
+            user_permission = service.permissions().create(
                 fileId=file_id,
                 body={
-                    "role": "owner",
+                    "role": "writer",
                     "type": "user",
                     "emailAddress": "iwasonamountian@gmail.com"
                 },
-                transferOwnership=True
+                sendNotificationEmail=False
             ).execute()
-            logger.info(f"Owner permission result: {owner_permission}")
+            logger.info(f"User permission result: {user_permission}")
 
         try:
             set_file_permissions()
@@ -489,7 +492,8 @@ def upload_to_google_drive(file_path, file_name):
             return share_link
         except Exception as e:
             logger.error(f"Error setting file permissions: {str(e)}", exc_info=True)
-            raise GoogleDriveError(f"Failed to set file permissions: {str(e)}")
+            # Return the link even if permission setting fails
+            return f"https://drive.google.com/file/d/{file_id}/view?usp=sharing"
 
     except Exception as e:
         logger.error(f"Error in upload_to_google_drive: {str(e)}", exc_info=True)
