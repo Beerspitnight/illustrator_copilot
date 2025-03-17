@@ -275,8 +275,8 @@ def save_results_to_temp_csv(books, query):
             <p>Example: <a href="/api/v1/search_books?query=design">/api/v1/search_books?query=design</a></p>
         </div>
         <div class="endpoint">
-            <p><strong>List Results:</strong> /api/v1/list_results</p>
-            <p>Example: <a href="/api/v1/list_results">/api/v1/list_results</a></p>
+            <p><strong>List Results:</strong> /list_results</p>
+            <p>Example: <a href=list_results">/ist_results</a></p>
         </div>
         <div class="endpoint">
             <p><strong>Health Check:</strong> /health</p>
@@ -407,7 +407,6 @@ def search_books():
 @api_v1.route("/list_results")
 def list_results():
     try:
-        # Check if the results directory exists
         if not os.path.exists(RESULTS_DIR):
             logger.warning(f"Results directory does not exist: {RESULTS_DIR}")
             return jsonify({
@@ -424,12 +423,12 @@ def list_results():
         })
     except Exception as e:
         logger.error(f"Error listing results: {str(e)}")
-    return redirect(url_for('api_v1.search_books', **request.args))
+        return redirect(url_for('api_v1.search_books', **request.args))
 
 @app.route("/search_books")
-def legacy_search_books():
+def redirect_legacy_search_books():
     """Redirect old endpoint to new versioned endpoint"""
-    return redirect(url_for('search_books', **request.args))
+    return redirect(url_for('api_v1.search_books', **request.args))
 
 def validate_port(port_str):
     if not port_str.isdigit():
