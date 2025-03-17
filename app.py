@@ -379,52 +379,56 @@ class BookAPIError(Exception):
 
 # Define upload_to_google_drive function
 def upload_to_google_drive(file_path, file_name):
-    """
-    Uploads a file to Google Drive and sets its permissions to be publicly accessible.
-
-    Args:
-        file_path (str): The full path to the file to be uploaded.
-        file_name (str): The name to assign to the file on Google Drive.
-
-    Returns:
-        str: A shareable Google Drive link to the uploaded file, or None if an error occurs.
-
-    Raises:
-        GoogleDriveError: If the file does not exist or the upload fails.
-    """
+    """Uploads a file to Google Drive with enhanced logging."""
     if not os.path.exists(file_path):
+        logger.error(f"File not found at path: {file_path}")
         raise GoogleDriveError(f"File not found: {file_path}")
 
-    logger.info(f"Attempting to upload file: {file_name} from path: {file_path}")
+    logger.info(f"Starting upload process for file: {file_name}")
+    logger.info(f"File path: {file_path}")
+    logger.info(f"File size: {os.path.getsize(file_path)} bytes")
 
     try:
+        logger.info("Getting Drive service...")
         service = get_drive_service()
+        
+        logger.info("Creating file metadata...")
         file_metadata = {'name': file_name}
+        
+        logger.info("Creating MediaFileUpload object...")
         media = MediaFileUpload(file_path, resumable=True)
+        
+        logger.info("Executing file creation...")
         file = service.files().create(body=file_metadata, media_body=media, fields='id').execute()
         file_id = file.get('id')
 
         if not file_id:
+            logger.error("No file ID received after upload")
             raise GoogleDriveError("Failed to get file ID after upload")
+
+        logger.info(f"File uploaded successfully with ID: {file_id}")
 
         # Make the file publicly accessible with retry logic
         @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
         def set_file_permissions():
-            service.permissions().create(
+            logger.info(f"Setting permissions for file ID: {file_id}")
+            permission_result = service.permissions().create(
                 fileId=file_id,
                 body={"role": "reader", "type": "anyone"}
             ).execute()
+            logger.info(f"Permission result: {permission_result}")
 
         try:
             set_file_permissions()
-            logger.info("File permissions set, shareable link generated.")
-            return f"https://drive.google.com/file/d/{file_id}/view?usp=sharing"
+            share_link = f"https://drive.google.com/file/d/{file_id}/view?usp=sharing"
+            logger.info(f"File shared successfully. Link: {share_link}")
+            return share_link
         except Exception as e:
-            logger.error(f"Error setting file permissions: {e}", exc_info=True)
-            raise GoogleDriveError("Failed to set file permissions for the uploaded file")
+            logger.error(f"Error setting file permissions: {str(e)}", exc_info=True)
+            raise GoogleDriveError(f"Failed to set file permissions: {str(e)}")
 
     except Exception as e:
-        logger.error(f"Error uploading file: {e}")
+        logger.error(f"Error in upload_to_google_drive: {str(e)}", exc_info=True)
         return None
 
 # Fix: A new function to handle both saving to CSV and uploading to Drive
@@ -481,6 +485,24 @@ def validate_port(port_str):
     if port <= 0 or port > 65535:
         raise ValueError("Port number must be between 1 and 65535.")
     return port
+
+# Add this temporary debug code at the top of your route
+@app.route("/test_drive")
+def test_drive():
+    try:
+        service = get_drive_service()
+        about = service.about().get(fields="user,storageQuota").execute()
+        return jsonify({
+            "success": True,
+            "user": about.get("user", {}),
+            "quota": about.get("storageQuota", {})
+        })
+    except Exception as e:
+        logger.error(f"Drive test failed: {str(e)}", exc_info=True)
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
 
 # Run the app
 if __name__ == "__main__":
