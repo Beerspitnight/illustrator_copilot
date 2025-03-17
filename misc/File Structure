@@ -8,3 +8,5 @@ project/
 │   └── books.py
 ├── app.py
 └── requirements.txt
+
+heroku logs --ill-co-p2 --tail
