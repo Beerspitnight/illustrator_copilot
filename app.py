@@ -64,27 +64,7 @@ RESULTS_DIR = os.path.join(os.getcwd(), "learning", "Results")
 # Define function to register routes
 def register_routes(api_v1):
     """Registers all the routes for the api_v1 blueprint."""
-
-    @api_v1.route("/list_results")
-    def list_results():
-        try:
-            if not os.path.exists(RESULTS_DIR):
-                logger.warning(f"Results directory does not exist: {RESULTS_DIR}")
-                return jsonify({
-                    "error": "Results directory does not exist",
-                    "directory": RESULTS_DIR
-                }), 404
-
-            # List all CSV files in the results directory
-            result_files = [f for f in os.listdir(RESULTS_DIR) if f.endswith('.csv')]
-            return jsonify({
-                "files": result_files,
-                "count": len(result_files),
-                "directory": RESULTS_DIR
-            })
-        except Exception as e:
-            logger.exception(f"Error listing results: {str(e)}")
-            return jsonify({"error": "An unexpected error occurred while listing results"}), 500
+    pass
 
 # Define create_app function
 def create_app():
@@ -152,6 +132,27 @@ def search_books():
     except Exception as e:
         logger.exception(f"Error in search_books: {e}")
         return jsonify({"error": "An unexpected error occurred while searching for books"}), 500
+
+@app.route("/list_results")
+def list_results():
+    try:
+        if not os.path.exists(RESULTS_DIR):
+            logger.warning(f"Results directory does not exist: {RESULTS_DIR}")
+            return jsonify({
+                "error": "Results directory does not exist",
+                "directory": RESULTS_DIR
+            }), 404
+
+        # List all CSV files in the results directory
+        result_files = [f for f in os.listdir(RESULTS_DIR) if f.endswith('.csv')]
+        return jsonify({
+            "files": result_files,
+            "count": len(result_files),
+            "directory": RESULTS_DIR
+        })
+    except Exception as e:
+        logger.exception(f"Error listing results: {str(e)}")
+        return jsonify({"error": "An unexpected error occurred while listing results"}), 500
 
 # Define before_request function
 @app.before_request
