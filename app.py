@@ -177,7 +177,7 @@ def get_file():
         if not os.path.exists(filepath):
             return jsonify({"error": "File not found"}), 404
 
-        return send_from_directory(results_dir, filename)
+        return send_from_directory(results_dir, filename, as_attachment=True)
     except ValueError:
         return jsonify({"error": "Invalid filename"}), 400
 
