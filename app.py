@@ -497,15 +497,7 @@ def upload_to_google_drive(file_path, file_name):
 
 # Fix: A new function to handle both saving to CSV and uploading to Drive
 def upload_search_results_to_drive(books, query):
-    """Saves books to a temporary CSV file and uploads to Google Drive.
-    
-    Args:
-        books (list): List of book dictionaries
-        query (str): Search query string
-        
-    Returns:
-        str: Google Drive link or None if failed
-    """
+    """Saves books to a temporary CSV file and uploads to Google Drive."""
     if not books:
         logger.warning("No books found for the given query.")
         return None
@@ -524,12 +516,11 @@ def upload_search_results_to_drive(books, query):
             writer = csv.DictWriter(file, fieldnames=fieldnames)
             writer.writeheader()
             for book in books:
-                # Handle authors list conversion and provide default values for missing fields
+                # Handle authors list conversion and provide default values
                 book_row = {field: book.get(field, "") for field in fieldnames}
                 if isinstance(book_row.get('authors'), list):
                     book_row['authors'] = ', '.join(book_row['authors'])
-                writer.writerow(book_row)
-                writer.writerow(book_row)
+                writer.writerow(book_row)  # Write only once
         
         # Upload to Google Drive
         return upload_to_google_drive(temp_file, file_name)
