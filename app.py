@@ -15,7 +15,12 @@ from googleapiclient.http import MediaFileUpload
 from pydantic import BaseModel
 from google.oauth2 import service_account
 from flask_compress import Compress
+from pydantic_settings import BaseSettings
+from tenacity import retry, stop_after_attempt, wait_exponential
+from functools import lru_cache
+from ratelimit import limits, sleep_and_retry, RateLimitException
 
+# Define BookResponse model
 class BookResponse(BaseModel):
     title: str
     authors: list[str]
@@ -32,9 +37,7 @@ class BookResponse(BaseModel):
             }
         }
 
-# config.py
-from pydantic_settings import BaseSettings
-
+# Define Settings model
 class Settings(BaseSettings):
     GOOGLE_BOOKS_API_KEY: str
     GOOGLE_APPLICATION_CREDENTIALS: str
@@ -44,11 +47,18 @@ class Settings(BaseSettings):
     class Config:
         env_file = '.env'
 
+# Initialize settings
 def get_settings():
     return Settings()
 
+# Initialize Blueprint
 api_v1 = Blueprint('api_v1', __name__, url_prefix='/api/v1')
 
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Define create_app function
 def create_app():
     """Application factory pattern"""
     app = Flask(__name__)
@@ -67,32 +77,55 @@ def create_app():
     compress.init_app(app)
 
     # Register blueprint
+    register_routes(api_v1)
     app.register_blueprint(api_v1)
 
     return app, settings
 
+# Define function to register routes
+def register_routes(api_v1):
+    RESULTS_DIR = os.path.join(os.getcwd(), "learning", "Results")
+
+    @api_v1.route("/list_results")
+    def list_results():
+        try:
+            if not os.path.exists(RESULTS_DIR):
+                logger.warning(f"Results directory does not exist: {RESULTS_DIR}")
+                return jsonify({
+                    "error": "Results directory does not exist",
+                    "directory": RESULTS_DIR
+                }), 404
+
+            # List all CSV files in the results directory
+            result_files = [f for f in os.listdir(RESULTS_DIR) if f.endswith('.csv')]
+            return jsonify({
+                "files": result_files,
+                "count": len(result_files),
+                "directory": RESULTS_DIR
+            })
+        except Exception as e:
+            logger.error(f"Error listing results: {str(e)}")
+            return jsonify({"error": str(e)}), 500
+
+# Create app instance
 app, settings = create_app()
 
-# Set up logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
+# Define before_request function
 @app.before_request
 def before_request():
     g.request_id = request.headers.get('X-Request-ID', str(uuid.uuid4()))
     logger.info(f"Processing request {g.request_id}")
-# Removed redundant check for settings being None
 
+# Validate GOOGLE_BOOKS_API_KEY
 GOOGLE_BOOKS_API_KEY = settings.GOOGLE_BOOKS_API_KEY
 if not GOOGLE_BOOKS_API_KEY or (isinstance(GOOGLE_BOOKS_API_KEY, str) and GOOGLE_BOOKS_API_KEY.strip() == ""):
     raise RuntimeError("GOOGLE_BOOKS_API_KEY is not set. Application cannot start without it.")
+
+# Ensure RESULTS_DIR exists
 RESULTS_DIR = os.path.join(os.getcwd(), "learning", "Results")
-os.makedirs(RESULTS_DIR, exist_ok=True)  # Ensure directory exists
+os.makedirs(RESULTS_DIR, exist_ok=True)
 
-from tenacity import retry, stop_after_attempt, wait_exponential
-from functools import lru_cache
-from ratelimit import limits, sleep_and_retry, RateLimitException
-
+# Define fetch_books_from_google function
 @sleep_and_retry
 @limits(calls=100, period=60)  # Add rate limiting
 def fetch_books_from_google(query):
@@ -112,10 +145,13 @@ def fetch_books_from_google(query):
     except Exception as e:
         logger.error(f"Error fetching books: {e}")
         raise
+
+# Log application details
 logger.info(f"Results directory: {RESULTS_DIR}")
 logger.info(f"Application root: {os.path.dirname(__file__)}")
 logger.info(f"Running on Heroku: {bool(os.getenv('HEROKU'))}")
 
+# Define get_drive_service function
 def get_drive_service():
     """Returns an authenticated Google Drive service object.
 
@@ -163,6 +199,7 @@ def get_drive_service():
         logger.error(f"Failed to create Drive service: {str(e)}")
         raise GoogleDriveError(f"Drive service creation failed: {str(e)}")
 
+# Define custom exceptions
 class GoogleDriveError(Exception):
     """Custom exception for Google Drive operations"""
     pass
@@ -171,6 +208,7 @@ class BookAPIError(Exception):
     """Custom exception for Google Books API operations"""
     pass
 
+# Define upload_to_google_drive function
 def upload_to_google_drive(file_path, file_name):
     """
     Uploads a file to Google Drive and sets its permissions to be publicly accessible.
@@ -193,7 +231,7 @@ def upload_to_google_drive(file_path, file_name):
 
     try:
         file_metadata = {'name': file_name}
-        media = MediaFileUpload(file_path, mimetype='text/csv', resumable=True)
+        media = MediaFileUpload(file_path, resumable=True)
         file = service.files().create(body=file_metadata, media_body=media, fields='id').execute()
         file_id = file.get('id')
 
@@ -217,9 +255,10 @@ def upload_to_google_drive(file_path, file_name):
             return None
 
     except Exception as e:
-        logger.error(f"Error uploading file: {e}", exc_info=True)
+        logger.error(f"Error uploading file: {e}")
         return None
 
+# Define save_results_to_temp_csv function
 def save_results_to_temp_csv(books, query):
     logger.info("save_results_to_temp_csv function CALLED!")
     if not books:
@@ -259,6 +298,7 @@ def save_results_to_temp_csv(books, query):
 # Pre-compile the regex pattern for truncating descriptions
 DESCRIPTION_TRUNCATION_REGEX = re.compile(r'(.{400,}?\.)(?:\s|$)')
 
+# Define filter_book_data function
 def filter_book_data(volume_info):
     """Extract relevant book information and format description."""
 
@@ -293,6 +333,7 @@ def filter_book_data(volume_info):
         "description": description,
     }
 
+# Define save_results_to_csv function
 def save_results_to_csv(books, query):
     """Save search results to a CSV file with enhanced error handling
 
@@ -340,7 +381,8 @@ def save_results_to_csv(books, query):
         logger.error(f"Error saving results to CSV: {str(e)}", exc_info=True)
         return None
 
-@api_v1.route("/search_books")
+# Define search_books route
+@app.route("/search_books")
 def search_books():
     query = request.args.get("query", "").strip()
     if not query or len(query) < 2:
@@ -373,32 +415,7 @@ def search_books():
         logger.error(f"Error in search_books: {e}")
         return jsonify({"error": str(e)}), 500
 
-@api_v1.route("/list_results")
-def list_results():
-    try:
-        if not os.path.exists(RESULTS_DIR):
-            logger.warning(f"Results directory does not exist: {RESULTS_DIR}")
-            return jsonify({
-                "error": "Results directory does not exist",
-                "directory": RESULTS_DIR
-            }), 404
-
-        # List all CSV files in the results directory
-        result_files = [f for f in os.listdir(RESULTS_DIR) if f.endswith('.csv')]
-        return jsonify({
-            "files": result_files,
-            "count": len(result_files),
-            "directory": RESULTS_DIR
-        })
-    except Exception as e:
-        logger.error(f"Error listing results: {str(e)}")
-        return jsonify({"error": str(e)}), 500
-
-@app.route("/search-books") # Changed route path here to /search-books (different path)
-def redirect_legacy_search_books():
-    """Redirect old endpoint to new versioned endpoint"""
-    return redirect(url_for('api_v1.search_books', query=request.args.get('query')))
-
+# Define validate_port function
 def validate_port(port_str):
     if not port_str.isdigit():
         raise RuntimeError(f"Invalid PORT environment variable: {port_str}. Must be a numeric value.")
@@ -407,6 +424,7 @@ def validate_port(port_str):
         raise ValueError("Port number must be between 1 and 65535.")
     return port
 
+# Run the app
 if __name__ == "__main__":
     port_env = os.environ.get("PORT", "5000")
     try:
