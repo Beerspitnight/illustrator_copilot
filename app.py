@@ -180,6 +180,7 @@ def get_file():
         return send_from_directory(results_dir, filename, as_attachment=True)
     except ValueError:
         return jsonify({"error": "Invalid filename"}), 400
+
 # Define before_request function
 @app.before_request
 def before_request():
