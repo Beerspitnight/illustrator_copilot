@@ -103,7 +103,7 @@ def create_app():
 # Create app instance
 app, settings = create_app()
 
-@app.route("/search_books")
+@app.route("/search_books", methods=["GET"])
 def search_books():
     query = request.args.get("query", "").strip()
     if not query or len(query) < 2:
@@ -132,8 +132,11 @@ def search_books():
             return jsonify({"error": "Failed to save results to CSV or upload to Google Drive"}), 500
 
         return jsonify({"books": validated_books, "csv_link": drive_link})
+    except ValueError as ve:
+        logger.error(f"ValueError in search_books: {ve}")
+        return jsonify({"error": "Invalid input"}), 400
     except Exception as e:
-        logger.exception(f"Error in search_books: {e}")
+        logger.exception(f"Unexpected error in search_books: {e}")
         return jsonify({"error": "An unexpected error occurred while searching for books"}), 500
 
 @app.route("/list_results")
