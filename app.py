@@ -1,4 +1,5 @@
-from flask import Flask, request, jsonify, g, redirect, url_for, Blueprint, send_from_directory, safe_join
+from flask import Flask, request, jsonify, g, redirect, url_for, Blueprint, send_from_directory
+from werkzeug.utils import safe_join
 from datetime import datetime
 import os
 import requests
