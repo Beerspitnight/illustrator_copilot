@@ -40,7 +40,7 @@ class Settings(BaseSettings):
     GOOGLE_APPLICATION_CREDENTIALS: str
     MAX_RETRIES: int = 3
     CACHE_TIMEOUT: int = 3600
-    
+
     class Config:
         env_file = '.env'
 
@@ -53,7 +53,7 @@ def create_app():
     """Application factory pattern"""
     app = Flask(__name__)
     settings = get_settings()
-    
+
     # Configure app with settings
     app.config.update(
         GOOGLE_BOOKS_API_KEY=settings.GOOGLE_BOOKS_API_KEY,
@@ -61,14 +61,14 @@ def create_app():
         MAX_RETRIES=settings.MAX_RETRIES,
         CACHE_TIMEOUT=settings.CACHE_TIMEOUT
     )
-    
+
     # Initialize extensions
     compress = Compress()
     compress.init_app(app)
-    
+
     # Register blueprint
     app.register_blueprint(api_v1)
-    
+
     return app, settings
 
 app, settings = create_app()
@@ -99,7 +99,7 @@ def fetch_books_from_google(query):
     """Fetch books from Google Books API with rate limiting and caching."""
     if not query or not isinstance(query, str) or len(query.strip()) == 0:
         raise ValueError("Query parameter must be a non-empty string.")
-    
+
     url = f"https://www.googleapis.com/books/v1/volumes?q={query}&key={GOOGLE_BOOKS_API_KEY}"
     try:
         response = requests.get(url)
@@ -118,10 +118,10 @@ logger.info(f"Running on Heroku: {bool(os.getenv('HEROKU'))}")
 
 def get_drive_service():
     """Returns an authenticated Google Drive service object.
-    
+
     Returns:
         googleapiclient.discovery.Resource: Authenticated Google Drive service
-        
+
     Raises:
         RuntimeError: If credentials are missing or invalid
         GoogleDriveError: If service creation fails
@@ -135,25 +135,25 @@ def get_drive_service():
         except binascii.Error:
             logger.error("GOOGLE_APPLICATION_CREDENTIALS is not a valid base64-encoded string")
             raise RuntimeError("GOOGLE_APPLICATION_CREDENTIALS must be a valid base64-encoded string.")
-        
+
         # Decode and parse credentials
         creds_json = base64.b64decode(google_credentials).decode("utf-8")
     try:
         # Decode and parse credentials
         creds_json = base64.b64decode(google_credentials).decode("utf-8")
         credentials_info = json.loads(creds_json)
-        
+
         # Create credentials object with specific scope
         credentials = service_account.Credentials.from_service_account_info(
-            credentials_info, 
+            credentials_info,
             scopes=["https://www.googleapis.com/auth/drive.file"]
         )
-        
+
         # Build and return the service
         service = build('drive', 'v3', credentials=credentials)
         logger.info("Successfully created Google Drive service")
         return service
-        
+
     except (binascii.Error, json.JSONDecodeError) as e:
         logger.error(f"Invalid GOOGLE_APPLICATION_CREDENTIALS format: {str(e)}")
     except Exception as e:
@@ -187,13 +187,13 @@ def upload_to_google_drive(file_path, file_name):
     """
     if not os.path.exists(file_path):
         raise GoogleDriveError(f"File not found: {file_path}")
-    
+
     service = get_drive_service()
     logger.info(f"Attempting to upload file: {file_name} from path: {file_path}")
-    
+
     try:
         file_metadata = {'name': file_name}
-        media = MediaFileUpload(file_path, resumable=True)
+        media = MediaFileUpload(file_path, mimetype='text/csv', resumable=True)
         file = service.files().create(body=file_metadata, media_body=media, fields='id').execute()
         file_id = file.get('id')
 
@@ -261,12 +261,12 @@ DESCRIPTION_TRUNCATION_REGEX = re.compile(r'(.{400,}?\.)(?:\s|$)')
 
 def filter_book_data(volume_info):
     """Extract relevant book information and format description."""
-    
+
     title = volume_info.get("title", "Unknown Title")
     authors_raw = volume_info.get("authors", ["Unknown Author"])  # Get raw authors data
-    
+
     logger.info(f"Raw authors data from Google Books API: {authors_raw}")  # Log raw authors data
-    
+
     # Forcefully ensure authors is ALWAYS a list of strings
     if isinstance(authors_raw, str):  # Check if authors_raw is a string
         authors = [authors_raw]       # Convert it to a list containing that string
@@ -274,19 +274,19 @@ def filter_book_data(volume_info):
         authors = [str(author) for author in authors_raw]  # Convert each element to string just to be safe
     else:  # Fallback for unexpected types
         authors = ["Unknown Author"]  # Default to Unknown Author list
-    
+
     logger.info(f"Processed authors data: {authors}")  # Log processed authors data
-    
+
     description = volume_info.get("description", "")
-    
+
     # Use pre-compiled regex to efficiently truncate the description
     if description:
         match = DESCRIPTION_TRUNCATION_REGEX.search(description)
         if match:
             description = match.group(1)
-    
+
     # The regex truncation already handles description truncation.
-    
+
     return {
         "title": title,
         "authors": authors,  # authors is now guaranteed to be a list of strings
@@ -295,30 +295,30 @@ def filter_book_data(volume_info):
 
 def save_results_to_csv(books, query):
     """Save search results to a CSV file with enhanced error handling
-    
+
     Args:
         books (list): List of book dictionaries to save
         query (str): Search query used to fetch the books
-        
+
     Returns:
         str: Name of the saved file or None if save failed
     """
     if not books:
         logger.warning("No books to save")
         return None
-        
+
     try:
         # Create timestamp and filename
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         filename = f'search_results_{query.replace(" ", "_")}_{timestamp}.csv'
         filepath = os.path.join(RESULTS_DIR, filename)
-        
+
         logger.info(f"Attempting to save results to: {filepath}")
         logger.info(f"Number of books to save: {len(books)}")
-        
+
         # Define fields once and consistently
         fieldnames = ['title', 'authors', 'description']
-        
+
         # Create a deep copy of books to save
         books_to_save = []
         for book in books:
@@ -326,21 +326,52 @@ def save_results_to_csv(books, query):
             if isinstance(book_copy.get('categories'), list):
                 book_copy['categories'] = ', '.join(book_copy['categories'])
             books_to_save.append(book_copy)
-        
+
         # Write CSV file with proper indentation
         with open(filepath, 'w', newline='', encoding='utf-8') as csvfile:
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
             writer.writeheader()
             writer.writerows(books_to_save)
-        
+
         logger.info(f"Successfully saved {len(books)} results to {filepath}")
         return filename
-        
+
     except Exception as e:
         logger.error(f"Error saving results to CSV: {str(e)}", exc_info=True)
         return None
 
-api_v1 = Blueprint('api_v1', __name__, url_prefix='/api/v1')
+@api_v1.route("/search_books")
+def search_books():
+    query = request.args.get("query", "").strip()
+    if not query or len(query) < 2:
+        return jsonify({"error": "Query must be at least 2 characters"}), 400
+
+    # Add pagination
+    per_page = request.args.get("per_page", default=10, type=int)
+    if not (0 < per_page <= 40):  # Google Books API limit
+        return jsonify({"error": "per_page must be between 1 and 40"}), 400
+
+    # Fetch books
+    try:
+        books = fetch_books_from_google(query)
+
+        # Validate and structure the book data
+        validated_books = []
+        for book in books:
+            try:
+                validated_books.append(BookResponse(**book).model_dump())
+            except Exception as e:
+                logger.error(f"Validation error for book data: {book}. Error: {e}")
+                continue
+
+        drive_link = save_results_to_temp_csv(validated_books, query)
+        if drive_link is None:
+            return jsonify({"error": "Failed to save results to CSV or upload to Google Drive"}), 500
+
+        return jsonify({"books": validated_books, "csv_link": drive_link})
+    except Exception as e:
+        logger.error(f"Error in search_books: {e}")
+        return jsonify({"error": str(e)}), 500
 
 @api_v1.route("/list_results")
 def list_results():
@@ -363,38 +394,10 @@ def list_results():
         logger.error(f"Error listing results: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
-@api_v1.route("/search_books")
-def search_books():
-    query = request.args.get("query", "").strip()
-    if not query or len(query) < 2:
-        return jsonify({"error": "Query must be at least 2 characters"}), 400
-
-    # Add pagination
-    per_page = request.args.get("per_page", default=10, type=int)
-    if not (0 < per_page <= 40):  # Google Books API limit
-        return jsonify({"error": "per_page must be between 1 and 40"}), 400
-
-    # Fetch books
-    try:
-        books = fetch_books_from_google(query)
-        
-        # Validate and structure the book data
-        validated_books = []
-        for book in books:
-            try:
-                validated_books.append(BookResponse(**book).model_dump())
-            except Exception as e:
-                logger.error(f"Validation error for book data: {book}. Error: {e}")
-                continue
-        
-        drive_link = save_results_to_temp_csv(validated_books, query)
-        if drive_link is None:
-            return jsonify({"error": "Failed to save results to CSV or upload to Google Drive"}), 500
-            
-        return jsonify({"books": validated_books, "csv_link": drive_link})
-    except Exception as e:
-        logger.error(f"Error in search_books: {e}")
-        return jsonify({"error": str(e)}), 500
+@app.route("/search-books") # Changed route path here to /search-books (different path)
+def redirect_legacy_search_books():
+    """Redirect old endpoint to new versioned endpoint"""
+    return redirect(url_for('api_v1.search_books', query=request.args.get('query')))
 
 def validate_port(port_str):
     if not port_str.isdigit():
