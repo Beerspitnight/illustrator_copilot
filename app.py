@@ -58,33 +58,12 @@ api_v1 = Blueprint('api_v1', __name__, url_prefix='/api/v1')
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Define create_app function
-def create_app():
-    """Application factory pattern"""
-    app = Flask(__name__)
-    settings = get_settings()
-
-    # Configure app with settings
-    app.config.update(
-        GOOGLE_BOOKS_API_KEY=settings.GOOGLE_BOOKS_API_KEY,
-        GOOGLE_APPLICATION_CREDENTIALS=settings.GOOGLE_APPLICATION_CREDENTIALS,
-        MAX_RETRIES=settings.MAX_RETRIES,
-        CACHE_TIMEOUT=settings.CACHE_TIMEOUT
-    )
-
-    # Initialize extensions
-    compress = Compress()
-    compress.init_app(app)
-
-    # Register blueprint
-    register_routes(api_v1)
-    app.register_blueprint(api_v1)
-
-    return app, settings
+# Define RESULTS_DIR outside the route function
+RESULTS_DIR = os.path.join(os.getcwd(), "learning", "Results")
 
 # Define function to register routes
 def register_routes(api_v1):
-    RESULTS_DIR = os.path.join(os.getcwd(), "learning", "Results")
+    """Registers all the routes for the api_v1 blueprint."""
 
     @api_v1.route("/list_results")
     def list_results():
@@ -106,6 +85,70 @@ def register_routes(api_v1):
         except Exception as e:
             logger.error(f"Error listing results: {str(e)}")
             return jsonify({"error": str(e)}), 500
+
+    @api_v1.route("/search_books")
+    def search_books():
+        query = request.args.get("query", "").strip()
+        if not query or len(query) < 2:
+            return jsonify({"error": "Query must be at least 2 characters"}), 400
+
+        # Add pagination
+        per_page = request.args.get("per_page", default=10, type=int)
+        if not (0 < per_page <= 40):  # Google Books API limit
+            return jsonify({"error": "per_page must be between 1 and 40"}), 400
+
+        # Fetch books
+        try:
+            books = fetch_books_from_google(query)
+
+            # Validate and structure the book data
+            validated_books = []
+            for book in books:
+                try:
+                    validated_books.append(BookResponse(**book).model_dump())
+                except Exception as e:
+                    logger.error(f"Validation error for book data: {book}. Error: {e}")
+                    continue
+
+            drive_link = save_results_to_temp_csv(validated_books, query)
+            if drive_link is None:
+                return jsonify({"error": "Failed to save results to CSV or upload to Google Drive"}), 500
+
+            return jsonify({"books": validated_books, "csv_link": drive_link})
+        except Exception as e:
+            logger.error(f"Error in search_books: {e}")
+            return jsonify({"error": str(e)}), 500
+
+# Define create_app function
+def create_app():
+    """Application factory pattern"""
+    app = Flask(__name__)
+    settings = get_settings()
+
+    # Configure app with settings
+    app.config.update(
+        GOOGLE_BOOKS_API_KEY=settings.GOOGLE_BOOKS_API_KEY,
+        GOOGLE_APPLICATION_CREDENTIALS=settings.GOOGLE_APPLICATION_CREDENTIALS,
+        MAX_RETRIES=settings.MAX_RETRIES,
+        CACHE_TIMEOUT=settings.CACHE_TIMEOUT
+    )
+
+    # Initialize extensions
+    compress = Compress()
+    compress.init_app(app)
+
+    # Register routes with the blueprint
+    register_routes(api_v1)
+
+    # Register the blueprint
+    app.register_blueprint(api_v1)
+
+    # Define a basic index route
+    @app.route("/")
+    def index():
+        return "<h1>Welcome to the LibraryCloud API!</h1>"
+
+    return app, settings
 
 # Create app instance
 app, settings = create_app()
@@ -380,40 +423,6 @@ def save_results_to_csv(books, query):
     except Exception as e:
         logger.error(f"Error saving results to CSV: {str(e)}", exc_info=True)
         return None
-
-# Define search_books route
-@app.route("/search_books")
-def search_books():
-    query = request.args.get("query", "").strip()
-    if not query or len(query) < 2:
-        return jsonify({"error": "Query must be at least 2 characters"}), 400
-
-    # Add pagination
-    per_page = request.args.get("per_page", default=10, type=int)
-    if not (0 < per_page <= 40):  # Google Books API limit
-        return jsonify({"error": "per_page must be between 1 and 40"}), 400
-
-    # Fetch books
-    try:
-        books = fetch_books_from_google(query)
-
-        # Validate and structure the book data
-        validated_books = []
-        for book in books:
-            try:
-                validated_books.append(BookResponse(**book).model_dump())
-            except Exception as e:
-                logger.error(f"Validation error for book data: {book}. Error: {e}")
-                continue
-
-        drive_link = save_results_to_temp_csv(validated_books, query)
-        if drive_link is None:
-            return jsonify({"error": "Failed to save results to CSV or upload to Google Drive"}), 500
-
-        return jsonify({"books": validated_books, "csv_link": drive_link})
-    except Exception as e:
-        logger.error(f"Error in search_books: {e}")
-        return jsonify({"error": str(e)}), 500
 
 # Define validate_port function
 def validate_port(port_str):
