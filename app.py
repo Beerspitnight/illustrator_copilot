@@ -21,6 +21,17 @@ class BookResponse(BaseModel):
     authors: list[str]
     description: str | None = None
 
+    class Config:
+        schema_extra = {
+            "example": {
+                "title": "The Great Gatsby",
+                "authors": ["F. Scott Fitzgerald"],
+                "description": "A story of the American dream...",
+                "categories": ["Fiction", "Classic"],
+                "publisher": "Scribner"
+            }
+        }
+
 # config.py
 from pydantic_settings import BaseSettings
 
@@ -82,7 +93,6 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 from functools import lru_cache
 from ratelimit import limits, sleep_and_retry, RateLimitException
 
-@sleep_and_retry
 @sleep_and_retry
 @limits(calls=100, period=60)  # Add rate limiting
 def fetch_books_from_google(query):
@@ -245,46 +255,7 @@ def save_results_to_temp_csv(books, query):
                 os.remove(file_path)
             except OSError:
                 logger.warning(f"Failed to remove temporary file: {file_path}")
-    """Single index route that returns HTML for better browser display"""
-    logger.info("Index route accessed!")
-    if not GOOGLE_BOOKS_API_KEY:
-        logger.error("API key not configured")
-        return jsonify({
-            "status": "configuration_error",
-            "message": "API key not configured. Please set GOOGLE_BOOKS_API_KEY environment variable."
-        }), 503
-    
-    # Return HTML instead of JSON for better browser experience
-    return """
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>LibraryCloud API</title>
-        <style>
-            body { font-family: Arial, sans-serif; margin: 40px; line-height: 1.6; }
-            h1 { color: #333; }
-            .endpoint { background: #f4f4f4; padding: 10px; border-radius: 5px; margin-bottom: 10px; }
-        </style>
-    </head>
-    <body>
-        <h1>Welcome to the Ill-Co-P Learns API!</h1>
-        <p>The API is running successfully.</p>
-        <h2>Available Endpoints:</h2>
-        <div class="endpoint">
-            <p><strong>Search Books:</strong> /api/v1/search_books?query=your_search_term</p>
-            <p>Example: <a href="/api/v1/search_books?query=design">/api/v1/search_books?query=design</a></p>
-        </div>
-        <div class="endpoint">
-            <p><strong>List Results:</strong> /list_results</p>
-            <p>Example: <a href=list_results">/ist_results</a></p>
-        </div>
-        <div class="endpoint">
-            <p><strong>Health Check:</strong> /health</p>
-            <p>Example: <a href="/health">/health</a></p>
-        </div>
-    </body>
-    </html>
-    """
+
 # Pre-compile the regex pattern for truncating descriptions
 DESCRIPTION_TRUNCATION_REGEX = re.compile(r'(.{400,}?\.)(?:\s|$)')
 
@@ -348,7 +319,7 @@ def save_results_to_csv(books, query):
         # Define fields once and consistently
         fieldnames = ['title', 'authors', 'description']
         
-        # Create a deep copy of books to avoid modifying the original data
+        # Create a deep copy of books to save
         books_to_save = []
         for book in books:
             book_copy = book.copy()
@@ -370,6 +341,27 @@ def save_results_to_csv(books, query):
         return None
 
 api_v1 = Blueprint('api_v1', __name__, url_prefix='/api/v1')
+
+@api_v1.route("/list_results")
+def list_results():
+    try:
+        if not os.path.exists(RESULTS_DIR):
+            logger.warning(f"Results directory does not exist: {RESULTS_DIR}")
+            return jsonify({
+                "error": "Results directory does not exist",
+                "directory": RESULTS_DIR
+            }), 404
+
+        # List all CSV files in the results directory
+        result_files = [f for f in os.listdir(RESULTS_DIR) if f.endswith('.csv')]
+        return jsonify({
+            "files": result_files,
+            "count": len(result_files),
+            "directory": RESULTS_DIR
+        })
+    except Exception as e:
+        logger.error(f"Error listing results: {str(e)}")
+        return jsonify({"error": str(e)}), 500
 
 @api_v1.route("/search_books")
 def search_books():
@@ -404,32 +396,6 @@ def search_books():
         logger.error(f"Error in search_books: {e}")
         return jsonify({"error": str(e)}), 500
 
-@api_v1.route("/list_results")
-def list_results():
-    try:
-        if not os.path.exists(RESULTS_DIR):
-            logger.warning(f"Results directory does not exist: {RESULTS_DIR}")
-            return jsonify({
-                "error": "Results directory does not exist",
-                "directory": RESULTS_DIR
-            }), 404
-
-        # List all CSV files in the results directory
-        result_files = [f for f in os.listdir(RESULTS_DIR) if f.endswith('.csv')]
-        return jsonify({
-            "files": result_files,
-            "count": len(result_files),
-            "directory": RESULTS_DIR
-        })
-    except Exception as e:
-        logger.error(f"Error listing results: {str(e)}")
-        return redirect(url_for('api_v1.search_books', **request.args))
-
-@app.route("/search_books")
-def redirect_legacy_search_books():
-    """Redirect old endpoint to new versioned endpoint"""
-    return redirect(url_for('api_v1.search_books', **request.args))
-
 def validate_port(port_str):
     if not port_str.isdigit():
         raise RuntimeError(f"Invalid PORT environment variable: {port_str}. Must be a numeric value.")
@@ -447,21 +413,3 @@ if __name__ == "__main__":
     except (ValueError, RuntimeError) as e:
         logger.error(f"Failed to start application: {e}")
         raise
-if __name__ == "__main__":
-    port_env = os.environ.get("PORT", "5000")
-    try:
-        port = validate_port(port_env)
-        debug_mode = os.environ.get("FLASK_ENV", "production") == "development"
-        app.run(host="0.0.0.0", port=port, debug=debug_mode)
-    except (ValueError, RuntimeError) as e:
-        raise e
-    class Config:
-        schema_extra = {
-            "example": {
-                "title": "The Great Gatsby",
-                "authors": ["F. Scott Fitzgerald"],
-                "description": "A story of the American dream...",
-                "categories": ["Fiction", "Classic"],
-                "publisher": "Scribner"
-            }
-        }
