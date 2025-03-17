@@ -366,34 +366,35 @@ def save_results_to_csv(books, query):
         return None
 
 def get_drive_service():
-    """Returns an authenticated Google Drive service object.
-
-    Returns:
-        googleapiclient.discovery.Resource: Authenticated Google Drive service
-
-    Raises:
-        RuntimeError: If credentials are missing or invalid
-        GoogleDriveError: If service creation fails
-    """
+    """Returns an authenticated Google Drive service object."""
     google_credentials = app.config['GOOGLE_APPLICATION_CREDENTIALS']
     if not google_credentials:
         logger.error("GOOGLE_APPLICATION_CREDENTIALS environment variable is not set")
         raise RuntimeError("GOOGLE_APPLICATION_CREDENTIALS is not set")
     
+    logger.info(f"Credential type: {type(google_credentials)}")
+    logger.info(f"Credential length: {len(google_credentials)}")
+    
     try:
-        # Fix: Properly handle different formats of credentials
-        if os.path.isfile(google_credentials):
-            # If it's a file path
-            with open(google_credentials, 'r') as f:
-                credentials_info = json.load(f)
-        else:
-            # Try to decode as base64
+        # First, try to decode base64
+        try:
+            logger.info("Attempting base64 decode...")
+            # Remove any whitespace/newlines that might have been added
+            cleaned_creds = google_credentials.strip()
+            creds_json = base64.b64decode(cleaned_creds).decode('utf-8')
+            logger.info("Successfully decoded base64")
+            credentials_info = json.loads(creds_json)
+            logger.info("Successfully parsed JSON after base64 decode")
+        except (binascii.Error, json.JSONDecodeError) as e:
+            logger.warning(f"Base64 decode failed: {str(e)}")
+            # If base64 fails, try direct JSON parsing
             try:
-                creds_json = base64.b64decode(google_credentials).decode("utf-8")
-                credentials_info = json.loads(creds_json)
-            except (binascii.Error, json.JSONDecodeError):
-                # If not base64, try direct JSON parsing
+                logger.info("Attempting direct JSON parse...")
                 credentials_info = json.loads(google_credentials)
+                logger.info("Successfully parsed JSON directly")
+            except json.JSONDecodeError as e:
+                logger.error(f"All parsing attempts failed: {str(e)}")
+                raise GoogleDriveError(f"Could not parse credentials: {str(e)}")
 
         # Create credentials object with specific scope
         credentials = service_account.Credentials.from_service_account_info(
@@ -406,11 +407,8 @@ def get_drive_service():
         logger.info("Successfully created Google Drive service")
         return service
 
-    except json.JSONDecodeError as e:
-        logger.error(f"Invalid credentials format: {str(e)}")
-        raise GoogleDriveError(f"Invalid credentials format: {str(e)}")
     except Exception as e:
-        logger.error(f"Failed to create Drive service: {str(e)}")
+        logger.error(f"Failed to create Drive service: {str(e)}", exc_info=True)
         raise GoogleDriveError(f"Drive service creation failed: {str(e)}")
 
 # Define custom exceptions
@@ -437,14 +435,21 @@ def upload_to_google_drive(file_path, file_name):
         logger.info("Getting Drive service...")
         service = get_drive_service()
         
-        logger.info("Creating file metadata...")
-        file_metadata = {'name': file_name}
+        logger.info("Creating file metadata with parent folder...")
+        file_metadata = {
+            'name': file_name,
+            'parents': ['1q8Rbo5N3mPweYlrf3rFFXxLGUbW95o-j']  # Specified folder ID
+        }
         
         logger.info("Creating MediaFileUpload object...")
         media = MediaFileUpload(file_path, resumable=True)
         
         logger.info("Executing file creation...")
-        file = service.files().create(body=file_metadata, media_body=media, fields='id').execute()
+        file = service.files().create(
+            body=file_metadata,
+            media_body=media,
+            fields='id'
+        ).execute()
         file_id = file.get('id')
 
         if not file_id:
@@ -453,15 +458,29 @@ def upload_to_google_drive(file_path, file_name):
 
         logger.info(f"File uploaded successfully with ID: {file_id}")
 
-        # Make the file publicly accessible with retry logic
+        # Make the file publicly accessible and transfer ownership
         @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
         def set_file_permissions():
             logger.info(f"Setting permissions for file ID: {file_id}")
-            permission_result = service.permissions().create(
+            
+            # Make file public
+            public_permission = service.permissions().create(
                 fileId=file_id,
                 body={"role": "reader", "type": "anyone"}
             ).execute()
-            logger.info(f"Permission result: {permission_result}")
+            logger.info(f"Public permission result: {public_permission}")
+            
+            # Give ownership to iwasonamountian@gmail.com
+            owner_permission = service.permissions().create(
+                fileId=file_id,
+                body={
+                    "role": "owner",
+                    "type": "user",
+                    "emailAddress": "iwasonamountian@gmail.com"
+                },
+                transferOwnership=True
+            ).execute()
+            logger.info(f"Owner permission result: {owner_permission}")
 
         try:
             set_file_permissions()
