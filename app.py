@@ -83,8 +83,8 @@ def register_routes(api_v1):
                 "directory": RESULTS_DIR
             })
         except Exception as e:
-            logger.error(f"Error listing results: {str(e)}")
-            return jsonify({"error": str(e)}), 500
+            logger.exception(f"Error listing results: {str(e)}")
+            return jsonify({"error": "An unexpected error occurred while listing results"}), 500
 
     @api_v1.route("/search_books")
     def search_books():
@@ -116,8 +116,8 @@ def register_routes(api_v1):
 
             return jsonify({"books": validated_books, "csv_link": drive_link})
         except Exception as e:
-            logger.error(f"Error in search_books: {e}")
-            return jsonify({"error": str(e)}), 500
+            logger.exception(f"Error in search_books: {e}")
+            return jsonify({"error": "An unexpected error occurred while searching for books"}), 500
 
 # Define create_app function
 def create_app():
