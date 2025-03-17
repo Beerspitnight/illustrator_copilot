@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, g, redirect, url_for, Blueprint, send_from_directory
+from flask import Flask, request, jsonify, g, redirect, url_for, Blueprint, send_from_directory, make_response
 from werkzeug.utils import safe_join
 from datetime import datetime
 import os
@@ -196,16 +196,15 @@ def list_results():
 
 @app.route("/get_file")
 def get_file():
-    filename = request.args.get("filename")  # Get filename from query params
+    filename = request.args.get("filename")
     if not filename:
         return jsonify({"error": "Filename parameter is required"}), 400
 
-    # Fix: Use app.config to get RESULTS_DIR
     results_dir = app.config['RESULTS_DIR']
     logger.info(f"Looking for file {filename} in directory {results_dir}")
 
     try:
-        # Fix: Properly validate and sanitize the filename
+        # Validate filename
         if not re.match(r'^[a-zA-Z0-9_.-]+$', filename):
             return jsonify({"error": "Invalid filename format"}), 400
             
@@ -216,22 +215,24 @@ def get_file():
             logger.error(f"File not found: {filepath}")
             return jsonify({"error": "File not found"}), 404
             
-        # Fix: Ensure the file is actually in the results directory (prevent directory traversal)
+        # Prevent directory traversal
         if os.path.commonpath([filepath, results_dir]) != os.path.normpath(results_dir):
             logger.error(f"Security issue: Attempted to access file outside results directory")
             return jsonify({"error": "Security error"}), 403
 
-        # Fix: Log file content and size for debugging
+        # Log file size
         file_size = os.path.getsize(filepath)
         logger.info(f"Serving file {filepath} with size {file_size} bytes")
         
-        # Fix: Use send_from_directory correctly
-        return send_from_directory(
-            results_dir,
-            filename,
-            as_attachment=True,
-            mimetype='text/csv'
-        )
+        # Read and return file content directly
+        with open(filepath, 'r', encoding='utf-8') as f:
+            content = f.read()
+            
+        response = make_response(content)
+        response.headers['Content-Type'] = 'text/csv'
+        response.headers['Content-Disposition'] = f'attachment; filename="{filename}"'
+        return response
+
     except Exception as e:
         logger.exception(f"Error serving file {filename}: {e}")
         return jsonify({"error": f"Error serving file: {str(e)}"}), 500
