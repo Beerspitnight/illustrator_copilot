@@ -45,3 +45,5 @@ flask-compress
 pydantic
 pydantic-settings
 ratelimit 
+Werkzeug
+
