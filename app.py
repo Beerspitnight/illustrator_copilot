@@ -224,14 +224,12 @@ def get_file():
         file_size = os.path.getsize(filepath)
         logger.info(f"Serving file {filepath} with size {file_size} bytes")
         
-        # Read and return file content directly
-        with open(filepath, 'r', encoding='utf-8') as f:
-            content = f.read()
-            
-        response = make_response(content)
-        response.headers['Content-Type'] = 'text/csv'
-        response.headers['Content-Disposition'] = f'attachment; filename="{filename}"'
-        return response
+        # Read file in binary mode
+        with open(filepath, 'rb') as f:
+            response = make_response(f.read())
+            response.headers['Content-Type'] = 'text/csv'
+            response.headers['Content-Disposition'] = f'attachment; filename="{filename}"'
+            return response
 
     except Exception as e:
         logger.exception(f"Error serving file {filename}: {e}")
